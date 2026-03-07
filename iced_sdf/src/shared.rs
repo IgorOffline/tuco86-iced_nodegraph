@@ -100,14 +100,14 @@ impl SharedSdfResources {
     }
 }
 
-/// Create the bind group layout for SDF rendering.
+/// Create the bind group layout for batched SDF rendering.
 fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
     use std::num::NonZeroU64;
 
     device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: Some("SDF Bind Group Layout"),
         entries: &[
-            // Binding 0: Uniforms (uniform buffer)
+            // Binding 0: Uniforms
             BindGroupLayoutEntry {
                 binding: 0,
                 visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
@@ -118,23 +118,39 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
                 },
                 count: None,
             },
-            // Binding 1: SDF Operations (storage buffer, read-only)
+            // Binding 1: Shape instances (read by vertex + fragment)
             BindGroupLayoutEntry {
                 binding: 1,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        NonZeroU64::new(
+                            <types::ShapeInstance as ShaderSize>::SHADER_SIZE.get(),
+                        )
+                        .expect("ShapeInstance SHADER_SIZE must be non-zero"),
+                    ),
+                },
+                count: None,
+            },
+            // Binding 2: SDF Operations (read by fragment)
+            BindGroupLayoutEntry {
+                binding: 2,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: Some(
-                        NonZeroU64::new(<types::SdfOp as ShaderSize>::SHADER_SIZE.get() * 4)
-                            .expect("SdfOp SHADER_SIZE * 4 must be non-zero"),
+                        NonZeroU64::new(<types::SdfOp as ShaderSize>::SHADER_SIZE.get())
+                            .expect("SdfOp SHADER_SIZE must be non-zero"),
                     ),
                 },
                 count: None,
             },
-            // Binding 2: Layers (storage buffer, read-only)
+            // Binding 3: Layers (read by fragment)
             BindGroupLayoutEntry {
-                binding: 2,
+                binding: 3,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },

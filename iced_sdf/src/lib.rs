@@ -9,23 +9,23 @@
 //! # Example
 //!
 //! ```ignore
-//! use iced_sdf::{Sdf, Layer, SdfPrimitive};
+//! use iced_sdf::{Sdf, SdfPrimitive, Layer};
 //! use iced::Color;
 //!
-//! // Create a shape with holes
-//! let shape = Sdf::rounded_box([0.0, 0.0], [100.0, 50.0], 8.0)
-//!     .subtract(Sdf::circle([50.0, 0.0], 15.0))
-//!     .subtract(Sdf::circle([-50.0, 0.0], 15.0));
+//! // Each SdfPrimitive is submitted individually via renderer.draw_primitive().
+//! // Iced's pipeline automatically batches them into shared GPU buffers.
 //!
-//! // Create layers for rendering (back to front)
-//! let layers = vec![
-//!     Layer::solid(Color::BLACK).expand(8.0).blur(4.0),  // Shadow
-//!     Layer::solid(Color::from_rgb(0.3, 0.3, 0.3)).expand(2.0),  // Outline
-//!     Layer::solid(Color::from_rgb(0.8, 0.8, 0.8)),  // Fill
-//! ];
+//! let node = SdfPrimitive::new(
+//!     Sdf::rounded_box([50.0, 25.0], [50.0, 25.0], 8.0),
+//! )
+//! .layers(vec![
+//!     Layer::solid(Color::BLACK).expand(6.0).blur(4.0),  // Shadow
+//!     Layer::solid(Color::from_rgb(0.8, 0.8, 0.8)),      // Fill
+//! ])
+//! .screen_bounds([0.0, 0.0, 120.0, 70.0])
+//! .camera(cam_x, cam_y, zoom);
 //!
-//! // Create the primitive
-//! let primitive = SdfPrimitive::new(shape).layers(layers);
+//! renderer.draw_primitive(bounds, node);
 //! ```
 //!
 //! # Operators
@@ -42,6 +42,7 @@
 //!     - Sdf::circle([0.0, 0.0], 25.0);  // Subtract
 //! ```
 
+pub mod batch;
 pub mod compile;
 pub mod eval;
 pub mod layer;
@@ -52,6 +53,7 @@ pub mod shape;
 pub mod shared;
 
 // Public API re-exports
+pub use batch::SdfBatch;
 pub use eval::{evaluate, SdfResult};
 pub use layer::Layer;
 pub use pattern::Pattern;

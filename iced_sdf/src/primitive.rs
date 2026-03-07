@@ -1,8 +1,10 @@
 //! SDF rendering primitive for Iced.
 //!
-//! Implements the `iced_wgpu::primitive::Primitive` trait for rendering
-//! SDF shapes with the GPU pipeline.
+//! Each `SdfPrimitive` represents a single SDF shape. Multiple primitives
+//! share the same `SdfPipeline`, which batches them into shared GPU buffers
+//! automatically via Iced's prepare/draw cycle.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use encase::ShaderSize;
@@ -10,7 +12,7 @@ use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BufferDescriptor, BufferUsages, Device, Queue,
     TextureFormat,
 };
-use iced::{Color, Rectangle};
+use iced::Rectangle;
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::{Pipeline, Primitive};
 
@@ -20,13 +22,19 @@ use crate::pipeline::{buffer, types};
 use crate::shape::Sdf;
 use crate::shared::SharedSdfResources;
 
-/// Primitive for rendering an SDF shape with layers.
+/// A single SDF shape primitive for rendering.
+///
+/// Each primitive carries its SDF tree and styling. During `prepare()`,
+/// the shape is compiled to RPN ops and pushed into the pipeline's shared
+/// GPU buffers. During `draw()`, the shape's instanced quad is rendered.
 #[derive(Debug, Clone)]
 pub struct SdfPrimitive {
     /// The SDF shape to render.
     pub shape: Sdf,
     /// Rendering layers (back to front).
     pub layers: Vec<Layer>,
+    /// Screen-space bounding box [x, y, width, height] for the instanced quad.
+    pub screen_bounds: [f32; 4],
     /// Camera position (world origin offset).
     pub camera_position: (f32, f32),
     /// Camera zoom factor.
@@ -36,11 +44,12 @@ pub struct SdfPrimitive {
 }
 
 impl SdfPrimitive {
-    /// Create a new SDF primitive.
+    /// Create a new SDF primitive with default settings.
     pub fn new(shape: Sdf) -> Self {
         Self {
             shape,
-            layers: vec![Layer::solid(Color::WHITE)],
+            layers: vec![Layer::solid(iced::Color::WHITE)],
+            screen_bounds: [0.0, 0.0, 100.0, 100.0],
             camera_position: (0.0, 0.0),
             camera_zoom: 1.0,
             time: 0.0,
@@ -53,14 +62,15 @@ impl SdfPrimitive {
         self
     }
 
-    /// Set camera position.
-    pub fn camera_position(mut self, x: f32, y: f32) -> Self {
-        self.camera_position = (x, y);
+    /// Set the screen-space bounding box for the instanced quad.
+    pub fn screen_bounds(mut self, bounds: [f32; 4]) -> Self {
+        self.screen_bounds = bounds;
         self
     }
 
-    /// Set camera zoom.
-    pub fn camera_zoom(mut self, zoom: f32) -> Self {
+    /// Set camera position and zoom.
+    pub fn camera(mut self, x: f32, y: f32, zoom: f32) -> Self {
+        self.camera_position = (x, y);
         self.camera_zoom = zoom;
         self
     }
@@ -72,27 +82,34 @@ impl SdfPrimitive {
     }
 }
 
-/// Pipeline for SDF rendering.
+/// Shared pipeline for all SDF primitives.
+///
+/// Accumulates shape data from multiple `prepare()` calls into shared GPU
+/// buffers, then renders all shapes via instanced draw calls.
 pub struct SdfPipeline {
-    /// Shared resources (shader, pipeline, layouts).
     shared: Arc<SharedSdfResources>,
-    /// Uniform buffer.
     uniform_buffer: iced::wgpu::Buffer,
-    /// SDF operations buffer.
+    shapes_buffer: buffer::Buffer<types::ShapeInstance>,
     ops_buffer: buffer::Buffer<types::SdfOp>,
-    /// Layers buffer.
     layers_buffer: buffer::Buffer<types::SdfLayer>,
-    /// Bind group.
     bind_group: BindGroup,
-    /// Bind group generation tracking.
-    bind_group_generations: (u64, u64),
+    bind_group_generations: (u64, u64, u64),
+    /// Slot counter incremented during prepare() to track shape index.
+    prepare_slot: u32,
+    /// Atomic slot counter for draw() to match prepare order.
+    draw_slot: AtomicU32,
+    /// Uniforms are written once per frame (by the first prepare call).
+    uniforms_written: bool,
+    /// Cached uniform values from the most recent prepare.
+    last_viewport_size: (f32, f32),
+    last_camera: (f32, f32, f32),
+    last_time: f32,
 }
 
 impl Pipeline for SdfPipeline {
     fn new(device: &Device, _queue: &Queue, format: TextureFormat) -> Self {
         let shared = SharedSdfResources::get_or_init(device, format);
 
-        // Create uniform buffer
         let uniform_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("sdf_uniforms"),
             size: <types::Uniforms as ShaderSize>::SHADER_SIZE.get(),
@@ -100,21 +117,24 @@ impl Pipeline for SdfPipeline {
             mapped_at_creation: false,
         });
 
-        // Create ops buffer
+        let shapes_buffer = buffer::Buffer::new(
+            device,
+            Some("sdf_shapes_buffer"),
+            BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        );
+
         let ops_buffer = buffer::Buffer::new(
             device,
             Some("sdf_ops_buffer"),
             BufferUsages::STORAGE | BufferUsages::COPY_DST,
         );
 
-        // Create layers buffer
         let layers_buffer = buffer::Buffer::new(
             device,
             Some("sdf_layers_buffer"),
             BufferUsages::STORAGE | BufferUsages::COPY_DST,
         );
 
-        // Create initial bind group
         let bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: Some("sdf_bind_group"),
             layout: &shared.bind_group_layout,
@@ -125,10 +145,14 @@ impl Pipeline for SdfPipeline {
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: ops_buffer.as_entire_binding(),
+                    resource: shapes_buffer.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
+                    resource: ops_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
                     resource: layers_buffer.as_entire_binding(),
                 },
             ],
@@ -137,16 +161,27 @@ impl Pipeline for SdfPipeline {
         Self {
             shared,
             uniform_buffer,
+            shapes_buffer,
             ops_buffer,
             layers_buffer,
             bind_group,
-            bind_group_generations: (0, 0),
+            bind_group_generations: (0, 0, 0),
+            prepare_slot: 0,
+            draw_slot: AtomicU32::new(0),
+            uniforms_written: false,
+            last_viewport_size: (0.0, 0.0),
+            last_camera: (0.0, 0.0, 1.0),
+            last_time: 0.0,
         }
     }
 
     fn trim(&mut self) {
+        self.shapes_buffer.clear();
         self.ops_buffer.clear();
         self.layers_buffer.clear();
+        self.prepare_slot = 0;
+        self.draw_slot.store(0, Ordering::Relaxed);
+        self.uniforms_written = false;
     }
 }
 
@@ -161,38 +196,81 @@ impl Primitive for SdfPrimitive {
         bounds: &Rectangle,
         viewport: &Viewport,
     ) {
-        // Compile SDF to RPN operations
-        let ops = compile(self.shape.node());
+        // Compile SDF tree to RPN ops
+        let compiled_ops = compile(self.shape.node());
+        let ops_offset = pipeline.ops_buffer.len() as u32;
+        let ops_count = compiled_ops.len() as u32;
 
-        // Push operations to buffer
-        for op in &ops {
+        for op in &compiled_ops {
             let _ = pipeline.ops_buffer.push(device, queue, op.clone());
         }
 
         // Convert and push layers
+        let layers_offset = pipeline.layers_buffer.len() as u32;
+        let layers_count = self.layers.len() as u32;
+
         for layer in &self.layers {
             let _ = pipeline.layers_buffer.push(device, queue, layer.to_gpu());
         }
 
-        // Update uniforms
+        // Push shape instance
+        let _ = pipeline.shapes_buffer.push(
+            device,
+            queue,
+            types::ShapeInstance {
+                bounds: glam::Vec4::new(
+                    self.screen_bounds[0],
+                    self.screen_bounds[1],
+                    self.screen_bounds[2],
+                    self.screen_bounds[3],
+                ),
+                ops_offset,
+                ops_count,
+                layers_offset,
+                layers_count,
+            },
+        );
+
+        pipeline.prepare_slot += 1;
+
+        // Write uniforms (update every prepare to capture latest values)
         let scale = viewport.scale_factor();
-        let uniforms = types::Uniforms {
-            viewport_size: glam::Vec2::new(bounds.width * scale, bounds.height * scale),
-            camera_position: glam::Vec2::new(self.camera_position.0, self.camera_position.1),
-            camera_zoom: self.camera_zoom,
-            time: self.time,
-            num_ops: ops.len() as u32,
-            num_layers: self.layers.len() as u32,
-        };
+        let vp_size = (bounds.width * scale, bounds.height * scale);
+        let cam = (
+            self.camera_position.0,
+            self.camera_position.1,
+            self.camera_zoom,
+        );
 
-        let mut uniform_buffer = encase::UniformBuffer::new(Vec::new());
-        uniform_buffer
-            .write(&uniforms)
-            .expect("Failed to write uniforms");
-        queue.write_buffer(&pipeline.uniform_buffer, 0, uniform_buffer.as_ref());
+        if !pipeline.uniforms_written
+            || vp_size != pipeline.last_viewport_size
+            || cam != pipeline.last_camera
+            || self.time != pipeline.last_time
+        {
+            let uniforms = types::Uniforms {
+                viewport_size: glam::Vec2::new(vp_size.0, vp_size.1),
+                camera_position: glam::Vec2::new(cam.0, cam.1),
+                camera_zoom: cam.2,
+                time: self.time,
+                num_ops: pipeline.ops_buffer.len() as u32,
+                num_layers: pipeline.layers_buffer.len() as u32,
+            };
 
-        // Recreate bind group if buffers were resized
+            let mut uniform_buffer = encase::UniformBuffer::new(Vec::new());
+            uniform_buffer
+                .write(&uniforms)
+                .expect("Failed to write uniforms");
+            queue.write_buffer(&pipeline.uniform_buffer, 0, uniform_buffer.as_ref());
+
+            pipeline.last_viewport_size = vp_size;
+            pipeline.last_camera = cam;
+            pipeline.last_time = self.time;
+            pipeline.uniforms_written = true;
+        }
+
+        // Recreate bind group if any buffer was resized
         let current_generations = (
+            pipeline.shapes_buffer.generation(),
             pipeline.ops_buffer.generation(),
             pipeline.layers_buffer.generation(),
         );
@@ -207,10 +285,14 @@ impl Primitive for SdfPrimitive {
                     },
                     BindGroupEntry {
                         binding: 1,
-                        resource: pipeline.ops_buffer.as_entire_binding(),
+                        resource: pipeline.shapes_buffer.as_entire_binding(),
                     },
                     BindGroupEntry {
                         binding: 2,
+                        resource: pipeline.ops_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 3,
                         resource: pipeline.layers_buffer.as_entire_binding(),
                     },
                 ],
@@ -224,10 +306,12 @@ impl Primitive for SdfPrimitive {
         pipeline: &Self::Pipeline,
         render_pass: &mut iced::wgpu::RenderPass<'_>,
     ) -> bool {
-        // Draw fullscreen triangle
+        let slot = pipeline.draw_slot.fetch_add(1, Ordering::Relaxed);
+
         render_pass.set_pipeline(&pipeline.shared.render_pipeline);
         render_pass.set_bind_group(0, &pipeline.bind_group, &[]);
-        render_pass.draw(0..3, 0..1);
+        // Draw one instance (6 vertices for the quad) at the correct instance offset
+        render_pass.draw(0..6, slot..slot + 1);
 
         true
     }

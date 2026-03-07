@@ -18,10 +18,28 @@ pub struct Uniforms {
     pub camera_zoom: f32,
     /// Time in seconds for animations.
     pub time: f32,
-    /// Number of SDF operations in the buffer.
+    /// Total number of SDF operations in the buffer.
     pub num_ops: u32,
-    /// Number of layers.
+    /// Total number of layers in the buffer.
     pub num_layers: u32,
+}
+
+/// A single shape instance in the batch.
+///
+/// Each shape has its own SDF ops and layers, referenced by offset into
+/// the flat ops/layers storage buffers.
+#[derive(Clone, Debug, ShaderType)]
+pub struct ShapeInstance {
+    /// Screen-space bounding box: (x, y, width, height).
+    pub bounds: glam::Vec4,
+    /// Offset into the ops buffer for this shape's RPN operations.
+    pub ops_offset: u32,
+    /// Number of RPN operations for this shape.
+    pub ops_count: u32,
+    /// Offset into the layers buffer for this shape's layers.
+    pub layers_offset: u32,
+    /// Number of layers for this shape.
+    pub layers_count: u32,
 }
 
 /// A single SDF operation (primitive or CSG op).
@@ -140,5 +158,15 @@ mod tests {
         let size = SdfLayer::SHADER_SIZE.get();
         assert!(size > 0, "SdfLayer size should be positive");
         assert!(size % 16 == 0, "SdfLayer size should be 16-byte aligned");
+    }
+
+    #[test]
+    fn test_shape_instance_size() {
+        let size = ShapeInstance::SHADER_SIZE.get();
+        assert!(size > 0, "ShapeInstance size should be positive");
+        assert!(
+            size % 16 == 0,
+            "ShapeInstance size should be 16-byte aligned"
+        );
     }
 }
