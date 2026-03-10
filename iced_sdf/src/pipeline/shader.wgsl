@@ -1018,7 +1018,9 @@ fn render_layer(sdf: SdfResult, layer: SdfLayer) -> vec4<f32> {
     if layer.blur > 0.0 {
         alpha = 1.0 - smoothstep(-layer.blur, layer.blur, d);
     } else {
-        alpha = select(0.0, 1.0, d < 0.0);
+        // Screen-space anti-aliasing: use fwidth for ~1px smooth edge
+        let aa = fwidth(d) * 0.75;
+        alpha = 1.0 - smoothstep(-aa, aa, d);
     }
 
     var color = layer.color;
