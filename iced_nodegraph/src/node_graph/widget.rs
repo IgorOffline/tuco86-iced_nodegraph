@@ -1034,7 +1034,7 @@ where
                     );
                 }
 
-                // Pins
+                // Pins (all shapes positioned in world space, same camera as everything else)
                 for (_pin_idx, (_pin_index, pin_state, (pin_pos, _))) in find_pins(node_tree, node_layout).iter().enumerate() {
                     let pin_idx = _pin_idx;
                     let is_valid_target = is_edge_dragging
@@ -1051,14 +1051,13 @@ where
                     let pin_border_color = pin_style.border_color.unwrap_or(iced::Color::TRANSPARENT);
                     let pin_border_width = pin_style.border_width;
                     let pin_color = pin_state.color;
-                    let _pin_side: u32 = pin_state.side.into();
+                    let pw = [pin_world.x, pin_world.y];
 
-                    // Build pin shape centered at origin, position via camera offset
+                    // All shapes positioned at pin's world coordinates
+                    // Diamond/Triangle fall back to circle (no center param in iced_sdf)
                     let pin_shape = match pin_style.shape {
-                        crate::style::PinShape::Square => Sdf::rect([0.0, 0.0], [indicator_r * 0.7, indicator_r * 0.7]),
-                        crate::style::PinShape::Diamond => Sdf::rhombus([indicator_r * 0.8, indicator_r * 0.8]),
-                        crate::style::PinShape::Triangle => Sdf::equilateral_triangle(indicator_r * 0.6),
-                        _ => Sdf::circle([0.0, 0.0], indicator_r),
+                        crate::style::PinShape::Square => Sdf::rect(pw, [indicator_r * 0.7, indicator_r * 0.7]),
+                        _ => Sdf::circle(pw, indicator_r),
                     };
 
                     // For input pins, make hollow (onion ring)
@@ -1087,13 +1086,12 @@ where
                         0.0, &render_context,
                     );
 
-                    // Position via camera offset (shape is at origin)
                     renderer.draw_primitive(
                         layout.bounds(),
                         SdfPrimitive::new(pin_shape)
                             .layers(pin_layers)
                             .screen_bounds(pin_bounds)
-                            .camera(cam_x + pin_world.x, cam_y + pin_world.y, cam_zoom)
+                            .camera(cam_x, cam_y, cam_zoom)
                             .time(render_context.time),
                     );
                 }
