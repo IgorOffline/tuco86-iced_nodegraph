@@ -25,7 +25,7 @@ use web_time::Instant;
 
 use super::{
     DragInfo, NodeGraph, NodeGraphMessage,
-    effects::{GridPrimitive, NodeLayer, NodePrimitive, PinRenderData, RenderContext},
+    effects::{GridPrimitive, RenderContext},
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState},
 };
@@ -38,8 +38,15 @@ use crate::{
 };
 use iced_sdf::{Layer, Pattern, Sdf, SdfPrimitive};
 
+use iced::Color;
+
 // Click detection threshold (in world-space pixels)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
+
+/// Apply opacity to a color by multiplying its alpha channel.
+fn color_with_opacity(c: Color, opacity: f32) -> Color {
+    Color { a: c.a * opacity, ..c }
+}
 
 /// Convert a world-space bounding box to screen-space bounds for SdfPrimitive.
 ///
@@ -807,21 +814,21 @@ where
                 ((0.0, 0.0), 0.0, iced::Color::TRANSPARENT)
             };
 
-            // Extract all border fields for NodePrimitive
+            // Extract border fields for node rendering
             let (
                 border_width,
                 border_start_color,
-                border_end_color,
+                _border_end_color,
                 border_pattern_type,
                 border_dash_length,
                 border_gap_length,
                 border_flow_speed,
                 inner_outline_width,
                 inner_outline_start_color,
-                inner_outline_end_color,
+                _inner_outline_end_color,
                 outer_outline_width,
                 outer_outline_start_color,
-                outer_outline_end_color,
+                _outer_outline_end_color,
             ) = if let Some(b) = &resolved.border {
                 let pattern_type = match &b.pattern {
                     crate::style::StrokePattern::Solid => 0u32,
@@ -870,89 +877,64 @@ where
                 )
             };
 
-            // Collect pins for this node
-            let pins: Vec<PinRenderData> = find_pins(node_tree, node_layout)
-                .iter()
-                .enumerate()
-                .map(|(pin_idx, (_pin_index, pin_state, (pin_pos, _)))| {
-                    let is_valid_target = is_edge_dragging
-                        && state.valid_drop_targets.contains(&(node_index, pin_idx));
-
-                    // Compute pin status for styling
-                    let pin_status = if is_valid_target {
-                        PinStatus::ValidTarget
-                    } else {
-                        PinStatus::Idle
-                    };
-
-                    // Resolve pin style: apply style_fn for status-based modifications
-                    let pin_style = if let Some(ref style_fn) = self.pin_style_fn {
-                        style_fn(theme, pin_status, resolved_pin_defaults)
-                    } else {
-                        resolved_pin_defaults
-                    };
-
-                    // Compute radius with animation scale
-                    let radius = pin_style.scaled_radius(pin_status, time);
-
-                    PinRenderData {
-                        offset: (pin_pos.into_euclid().to_vector() + offset).to_point(),
-                        side: pin_state.side.into(),
-                        radius,
-                        color: pin_state.color,
-                        direction: pin_state.direction,
-                        shape: pin_style.shape,
-                        border_color: pin_style
-                            .border_color
-                            .unwrap_or(iced::Color::TRANSPARENT),
-                        border_width: pin_style.border_width,
-                    }
-                })
-                .collect();
-
             let node_position: WorldPoint =
                 (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
             let node_size = node_layout.bounds().size();
+            let node_center = [
+                node_position.x + node_size.width * 0.5,
+                node_position.y + node_size.height * 0.5,
+            ];
+            let node_half_size = [node_size.width * 0.5, node_size.height * 0.5];
+            let corner_radius = resolved.corner_radius;
+            let opacity = resolved.opacity;
+            let cam_x = render_context.camera_position.x;
+            let cam_y = render_context.camera_position.y;
+            let cam_zoom = render_context.camera_zoom;
 
-            // Build NodePrimitive data (will be used for both layers)
-            // Note: Hover glow was removed. Glow is set to 0.0/TRANSPARENT.
-            let node_primitive = NodePrimitive {
-                context: render_context,
-                layer: NodeLayer::Background, // Will be overwritten
-                position: node_position,
-                size: node_size,
-                corner_radius: resolved.corner_radius,
-                border_width,
-                opacity: resolved.opacity,
-                fill_color: resolved.fill_color,
-                border_start_color,
-                border_end_color,
-                border_pattern_type,
-                border_dash_length,
-                border_gap_length,
-                border_flow_speed,
-                inner_outline_width,
-                inner_outline_start_color,
-                inner_outline_end_color,
-                outer_outline_width,
-                outer_outline_start_color,
-                outer_outline_end_color,
-                shadow_offset,
-                shadow_blur,
-                shadow_color,
-                glow_color: iced::Color::TRANSPARENT,
-                glow_radius: 0.0,
-                pins: pins.clone(),
-            };
-
-            // Layer 3a: Node Background (fill + shadow)
+            // Layer 3a: Node Background (shadow + fill)
             renderer.with_layer(layout.bounds(), |renderer| {
+                // Shadow (separate primitive due to offset)
+                if shadow_color.a > 0.0 && shadow_blur > 0.0 {
+                    let sc = [
+                        node_center[0] + shadow_offset.0,
+                        node_center[1] + shadow_offset.1,
+                    ];
+                    let pad = shadow_blur * 1.5;
+                    let sb = world_bbox_to_screen_bounds(
+                        sc[0] - node_half_size[0], sc[1] - node_half_size[1],
+                        sc[0] + node_half_size[0], sc[1] + node_half_size[1],
+                        pad, &render_context,
+                    );
+                    renderer.draw_primitive(
+                        layout.bounds(),
+                        SdfPrimitive::new(Sdf::rounded_box(sc, node_half_size, corner_radius))
+                            .layers(vec![
+                                Layer::solid(color_with_opacity(shadow_color, opacity))
+                                    .expand(shadow_blur * 0.5)
+                                    .blur(shadow_blur),
+                            ])
+                            .screen_bounds(sb)
+                            .camera(cam_x, cam_y, cam_zoom)
+                            .time(render_context.time),
+                    );
+                }
+
+                // Fill
+                let fill_pad = 2.0 / cam_zoom;
+                let fb = world_bbox_to_screen_bounds(
+                    node_position.x, node_position.y,
+                    node_position.x + node_size.width, node_position.y + node_size.height,
+                    fill_pad, &render_context,
+                );
                 renderer.draw_primitive(
                     layout.bounds(),
-                    NodePrimitive {
-                        layer: NodeLayer::Background,
-                        ..node_primitive.clone()
-                    },
+                    SdfPrimitive::new(Sdf::rounded_box(node_center, node_half_size, corner_radius))
+                        .layers(vec![
+                            Layer::solid(color_with_opacity(resolved.fill_color, opacity)),
+                        ])
+                        .screen_bounds(fb)
+                        .camera(cam_x, cam_y, cam_zoom)
+                        .time(render_context.time),
                 );
             });
 
@@ -991,13 +973,130 @@ where
 
             // Layer 3c: Node Foreground (border + pins)
             renderer.with_layer(layout.bounds(), |renderer| {
-                renderer.draw_primitive(
-                    layout.bounds(),
-                    NodePrimitive {
-                        layer: NodeLayer::Foreground,
-                        ..node_primitive
-                    },
-                );
+                // Border
+                if border_width > 0.0 {
+                    let border_pad = border_width + 2.0 / cam_zoom;
+                    let bb = world_bbox_to_screen_bounds(
+                        node_position.x, node_position.y,
+                        node_position.x + node_size.width, node_position.y + node_size.height,
+                        border_pad, &render_context,
+                    );
+
+                    let border_pattern = match border_pattern_type {
+                        1 => Pattern::dashed(border_width, border_dash_length, border_gap_length),
+                        2 => Pattern::dotted(border_dash_length.max(border_width), border_width * 0.5),
+                        3 => Pattern::arrowed(border_width, border_dash_length, border_gap_length, std::f32::consts::FRAC_PI_4),
+                        _ => Pattern::solid(border_width),
+                    };
+                    let border_pattern = if border_flow_speed != 0.0 {
+                        border_pattern.flow(border_flow_speed)
+                    } else {
+                        border_pattern
+                    };
+
+                    let mut border_layers = Vec::new();
+
+                    // Outer outline (behind border)
+                    if outer_outline_width > 0.0 && outer_outline_start_color.a > 0.0 {
+                        border_layers.push(
+                            Layer::stroke(
+                                color_with_opacity(outer_outline_start_color, opacity),
+                                Pattern::solid(border_width + outer_outline_width * 2.0),
+                            ),
+                        );
+                    }
+
+                    // Border stroke
+                    border_layers.push(
+                        Layer::stroke(
+                            color_with_opacity(border_start_color, opacity),
+                            border_pattern,
+                        ),
+                    );
+
+                    // Inner outline (on top of border)
+                    if inner_outline_width > 0.0 && inner_outline_start_color.a > 0.0 {
+                        border_layers.push(
+                            Layer::stroke(
+                                color_with_opacity(inner_outline_start_color, opacity),
+                                Pattern::solid(border_width - inner_outline_width * 2.0),
+                            ),
+                        );
+                    }
+
+                    renderer.draw_primitive(
+                        layout.bounds(),
+                        SdfPrimitive::new(Sdf::rounded_box(node_center, node_half_size, corner_radius).onion(border_width * 0.5))
+                            .layers(border_layers)
+                            .screen_bounds(bb)
+                            .camera(cam_x, cam_y, cam_zoom)
+                            .time(render_context.time),
+                    );
+                }
+
+                // Pins
+                for (_pin_idx, (_pin_index, pin_state, (pin_pos, _))) in find_pins(node_tree, node_layout).iter().enumerate() {
+                    let pin_idx = _pin_idx;
+                    let is_valid_target = is_edge_dragging
+                        && state.valid_drop_targets.contains(&(node_index, pin_idx));
+                    let pin_status = if is_valid_target { PinStatus::ValidTarget } else { PinStatus::Idle };
+                    let pin_style = if let Some(ref style_fn) = self.pin_style_fn {
+                        style_fn(theme, pin_status, resolved_pin_defaults)
+                    } else {
+                        resolved_pin_defaults
+                    };
+                    let radius = pin_style.scaled_radius(pin_status, time);
+                    let indicator_r = radius * 0.4;
+                    let pin_world: WorldPoint = (pin_pos.into_euclid().to_vector() + offset).to_point();
+                    let pin_border_color = pin_style.border_color.unwrap_or(iced::Color::TRANSPARENT);
+                    let pin_border_width = pin_style.border_width;
+                    let pin_color = pin_state.color;
+                    let _pin_side: u32 = pin_state.side.into();
+
+                    // Build pin shape centered at origin, position via camera offset
+                    let pin_shape = match pin_style.shape {
+                        crate::style::PinShape::Square => Sdf::rect([0.0, 0.0], [indicator_r * 0.7, indicator_r * 0.7]),
+                        crate::style::PinShape::Diamond => Sdf::rhombus([indicator_r * 0.8, indicator_r * 0.8]),
+                        crate::style::PinShape::Triangle => Sdf::equilateral_triangle(indicator_r * 0.6),
+                        _ => Sdf::circle([0.0, 0.0], indicator_r),
+                    };
+
+                    // For input pins, make hollow (onion ring)
+                    let pin_shape = if pin_state.direction == PinDirection::Input {
+                        pin_shape.onion(indicator_r * 0.4)
+                    } else {
+                        pin_shape
+                    };
+
+                    let mut pin_layers = Vec::new();
+
+                    // Border layer (behind fill)
+                    if pin_border_color.a > 0.0 && pin_border_width > 0.0 {
+                        pin_layers.push(
+                            Layer::solid(pin_border_color).expand(pin_border_width),
+                        );
+                    }
+
+                    // Fill layer
+                    pin_layers.push(Layer::solid(pin_color));
+
+                    let pin_pad = indicator_r + pin_border_width + 2.0 / cam_zoom;
+                    let pin_bounds = world_bbox_to_screen_bounds(
+                        pin_world.x - pin_pad, pin_world.y - pin_pad,
+                        pin_world.x + pin_pad, pin_world.y + pin_pad,
+                        0.0, &render_context,
+                    );
+
+                    // Position via camera offset (shape is at origin)
+                    renderer.draw_primitive(
+                        layout.bounds(),
+                        SdfPrimitive::new(pin_shape)
+                            .layers(pin_layers)
+                            .screen_bounds(pin_bounds)
+                            .camera(cam_x + pin_world.x, cam_y + pin_world.y, cam_zoom)
+                            .time(render_context.time),
+                    );
+                }
             });
         }
 

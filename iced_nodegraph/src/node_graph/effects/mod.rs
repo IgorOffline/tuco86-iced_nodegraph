@@ -1,13 +1,10 @@
 //! GPU rendering effects for NodeGraph.
 //!
-//! Each primitive type participates in Iced's layer system for correct compositing:
-//! - `GridPrimitive` - Background grid pattern
-//! - `NodePrimitive` - Node with background/foreground layer support (includes pins)
-//! - `EdgePrimitive` - Single edge rendering
+//! - `GridPrimitive` - Background grid pattern (custom WGPU pipeline)
 //!
-//! Overlays (box selection, edge cutting) use `iced_sdf::SdfPrimitive` directly.
+//! Nodes, edges, pins, and overlays use `iced_sdf::SdfPrimitive` directly.
 
-pub use primitives::{GridPrimitive, NodeLayer, NodePrimitive, PinRenderData, RenderContext};
+pub use primitives::{GridPrimitive, RenderContext};
 
 pub(crate) mod pipeline;
 pub mod primitives;

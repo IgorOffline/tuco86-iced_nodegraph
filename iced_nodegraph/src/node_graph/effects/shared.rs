@@ -1,7 +1,7 @@
-//! Shared GPU resources for all NodeGraph primitives.
+//! Shared GPU resources for NodeGraph grid primitive.
 //!
-//! Uses lazy initialization to ensure shader module and render pipelines
-//! are created exactly once and shared across all primitive types (Grid, Node, Edges).
+//! Uses lazy initialization to ensure shader module and render pipeline
+//! are created exactly once.
 //!
 //! On native: Uses `OnceLock<Arc<...>>` for thread-safe global storage.
 //! On WASM: Uses `thread_local!` because WGPU types contain JsValue which is not Send+Sync.
@@ -31,30 +31,23 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// Shared GPU resources for all NodeGraph primitives.
+/// Shared GPU resources for the grid primitive.
 ///
-/// Contains the compiled shader module, bind group layouts, and render pipelines
-/// that are shared between GridPrimitive, NodePrimitive, and EdgesPrimitive.
+/// Contains the compiled shader module, bind group layout, and render pipeline
+/// for the GridPrimitive (the only remaining custom WGPU primitive).
 #[allow(dead_code)]
 pub struct SharedNodeGraphResources {
-    /// Compiled shader module containing all entry points.
+    /// Compiled shader module containing grid entry points.
     pub shader_module: ShaderModule,
 
-    /// Bind group layout shared by all pipelines.
+    /// Bind group layout for the grid pipeline.
     pub bind_group_layout: BindGroupLayout,
 
-    /// Pipeline layout shared by all render pipelines.
+    /// Pipeline layout for the grid render pipeline.
     pub pipeline_layout: PipelineLayout,
 
-    // Render pipelines for each primitive pass
     /// Background grid (fullscreen)
     pub grid_pipeline: RenderPipeline,
-    /// Node fill + shadow (before widgets)
-    pub node_fill_pipeline: RenderPipeline,
-    /// Node border (after widgets)
-    pub node_border_pipeline: RenderPipeline,
-    /// Pin indicators
-    pub pin_pipeline: RenderPipeline,
 }
 
 impl SharedNodeGraphResources {
@@ -115,54 +108,19 @@ impl SharedNodeGraphResources {
             "grid",
         );
 
-        let node_fill_pipeline = create_render_pipeline(
-            device,
-            format,
-            &pipeline_layout,
-            &shader_module,
-            "vs_node",
-            "fs_node_fill",
-            "node_fill",
-        );
-
-        let node_border_pipeline = create_render_pipeline(
-            device,
-            format,
-            &pipeline_layout,
-            &shader_module,
-            "vs_node",
-            "fs_node",
-            "node_border",
-        );
-
-        let pin_pipeline = create_render_pipeline(
-            device,
-            format,
-            &pipeline_layout,
-            &shader_module,
-            "vs_pin",
-            "fs_pin",
-            "pins",
-        );
-
         Self {
             shader_module,
             bind_group_layout,
             pipeline_layout,
             grid_pipeline,
-            node_fill_pipeline,
-            node_border_pipeline,
-            pin_pipeline,
         }
     }
 }
 
-/// Create the bind group layout shared by all NodeGraph pipelines.
+/// Create the bind group layout for the grid pipeline.
 fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
-    use std::num::NonZeroU64;
-
     device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-        label: Some("NodeGraph Shared Bind Group Layout"),
+        label: Some("NodeGraph Grid Bind Group Layout"),
         entries: &[
             // Binding 0: Uniforms (uniform buffer)
             BindGroupLayoutEntry {
@@ -175,57 +133,15 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
                 },
                 count: None,
             },
-            // Binding 1: Nodes (storage buffer, read-only)
+            // Binding 1: Grid (storage buffer, read-only)
             BindGroupLayoutEntry {
                 binding: 1,
-                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: Some(
-                        NonZeroU64::new(<types::Node as ShaderSize>::SHADER_SIZE.get() * 10)
-                            .expect("Node SHADER_SIZE * 10 must be non-zero"),
-                    ),
-                },
-                count: None,
-            },
-            // Binding 2: Pins (storage buffer, read-only)
-            BindGroupLayoutEntry {
-                binding: 2,
-                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(
-                        NonZeroU64::new(<types::Pin as ShaderSize>::SHADER_SIZE.get() * 10)
-                            .expect("Pin SHADER_SIZE * 10 must be non-zero"),
-                    ),
-                },
-                count: None,
-            },
-            // Binding 3: Edges (storage buffer, read-only)
-            BindGroupLayoutEntry {
-                binding: 3,
-                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(
-                        NonZeroU64::new(<types::Edge as ShaderSize>::SHADER_SIZE.get() * 10)
-                            .expect("Edge SHADER_SIZE * 10 must be non-zero"),
-                    ),
-                },
-                count: None,
-            },
-            // Binding 4: Grids (storage buffer, read-only)
-            BindGroupLayoutEntry {
-                binding: 4,
-                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(
-                        NonZeroU64::new(<types::Grid as ShaderSize>::SHADER_SIZE.get())
+                        std::num::NonZeroU64::new(<types::Grid as ShaderSize>::SHADER_SIZE.get())
                             .expect("Grid SHADER_SIZE must be non-zero"),
                     ),
                 },

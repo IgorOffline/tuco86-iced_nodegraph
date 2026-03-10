@@ -1,16 +1,12 @@
-//! Separate Iced primitives for NodeGraph rendering.
+//! Iced primitives for NodeGraph rendering.
 //!
-//! Each primitive type participates in Iced's layer system for correct compositing:
-//! - `GridPrimitive` - Background grid pattern
-//! - `EdgePrimitive` - Single edge rendering
-//! - `NodePrimitive` - Single node with Background/Foreground layer support
+//! - `GridPrimitive` - Background grid pattern (custom WGPU pipeline)
 //!
-//! Overlays (box selection, edge cutting) use `iced_sdf::SdfPrimitive` directly.
+//! Nodes, edges, pins, and overlays use `iced_sdf::SdfPrimitive` directly.
 
 use crate::node_graph::euclid::WorldPoint;
 
 mod grid;
-mod node;
 
 /// Shared per-frame rendering context for all primitives.
 #[derive(Debug, Clone, Copy)]
@@ -21,4 +17,3 @@ pub struct RenderContext {
 }
 
 pub use grid::GridPrimitive;
-pub use node::{NodeLayer, NodePrimitive, PinRenderData};

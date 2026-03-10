@@ -29,24 +29,13 @@ pub struct GridPrimitive {
 }
 
 /// Pipeline for GridPrimitive rendering.
-///
-/// Holds shared GPU resources and grid-specific buffers.
 pub struct GridPipeline {
-    /// Shared resources (shader, pipelines, layouts)
+    /// Shared resources (shader, pipeline, layout)
     shared: Arc<SharedNodeGraphResources>,
     /// Uniform buffer
     uniforms: Buffer,
     /// Grid storage buffer
     grids: Buffer,
-    /// Dummy node buffer (required by bind group layout but not read)
-    #[allow(dead_code)]
-    dummy_nodes: Buffer,
-    /// Dummy pin buffer (required by bind group layout but not read)
-    #[allow(dead_code)]
-    dummy_pins: Buffer,
-    /// Dummy edge buffer (required by bind group layout but not read)
-    #[allow(dead_code)]
-    dummy_edges: Buffer,
     /// Bind group for rendering
     bind_group: BindGroup,
 }
@@ -55,7 +44,6 @@ impl Pipeline for GridPipeline {
     fn new(device: &Device, _queue: &Queue, format: TextureFormat) -> Self {
         let shared = SharedNodeGraphResources::get_or_init(device, format);
 
-        // Create uniform buffer
         let uniforms = device.create_buffer(&BufferDescriptor {
             label: Some("grid_uniforms"),
             size: <types::Uniforms as ShaderSize>::SHADER_SIZE.get(),
@@ -63,7 +51,6 @@ impl Pipeline for GridPipeline {
             mapped_at_creation: false,
         });
 
-        // Create grids storage buffer
         let grids = device.create_buffer(&BufferDescriptor {
             label: Some("grid_grids_buffer"),
             size: <types::Grid as ShaderSize>::SHADER_SIZE.get(),
@@ -71,29 +58,6 @@ impl Pipeline for GridPipeline {
             mapped_at_creation: false,
         });
 
-        // Create minimal dummy buffers (required by bind group layout but not used)
-        let dummy_nodes = device.create_buffer(&BufferDescriptor {
-            label: Some("grid_dummy_nodes"),
-            size: <types::Node as ShaderSize>::SHADER_SIZE.get() * 10,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let dummy_pins = device.create_buffer(&BufferDescriptor {
-            label: Some("grid_dummy_pins"),
-            size: <types::Pin as ShaderSize>::SHADER_SIZE.get() * 10,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let dummy_edges = device.create_buffer(&BufferDescriptor {
-            label: Some("grid_dummy_edges"),
-            size: <types::Edge as ShaderSize>::SHADER_SIZE.get() * 10,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Create bind group
         let bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: Some("grid_bind_group"),
             layout: &shared.bind_group_layout,
@@ -104,18 +68,6 @@ impl Pipeline for GridPipeline {
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: dummy_nodes.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: dummy_pins.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: dummy_edges.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
                     resource: grids.as_entire_binding(),
                 },
             ],
@@ -125,9 +77,6 @@ impl Pipeline for GridPipeline {
             shared,
             uniforms,
             grids,
-            dummy_nodes,
-            dummy_pins,
-            dummy_edges,
             bind_group,
         }
     }
@@ -147,7 +96,6 @@ impl Primitive for GridPrimitive {
         let scale = viewport.scale_factor();
         let style = &self.background_style;
 
-        // Build uniforms (global data only)
         let uniforms = types::Uniforms {
             os_scale_factor: scale,
             camera_zoom: self.context.camera_zoom,
@@ -162,14 +110,12 @@ impl Primitive for GridPrimitive {
             _pad0: glam::Vec2::ZERO,
         };
 
-        // Write uniforms using encase
         let mut uniform_buffer = encase::UniformBuffer::new(Vec::new());
         uniform_buffer
             .write(&uniforms)
             .expect("Failed to write uniforms");
         queue.write_buffer(&pipeline.uniforms, 0, uniform_buffer.as_ref());
 
-        // Build grid data
         let grid = types::Grid {
             pattern_type: style.pattern.type_id(),
             flags: (if style.adaptive_zoom { 1u32 } else { 0 })
@@ -207,7 +153,6 @@ impl Primitive for GridPrimitive {
             ),
         };
 
-        // Write grid data using encase
         let mut grid_buffer = encase::StorageBuffer::new(Vec::new());
         grid_buffer.write(&grid).expect("Failed to write grid");
         queue.write_buffer(&pipeline.grids, 0, grid_buffer.as_ref());
