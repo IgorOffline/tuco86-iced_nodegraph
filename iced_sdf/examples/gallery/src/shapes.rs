@@ -227,6 +227,26 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
             extent: 120.0,
         },
         ShapeEntry {
+            name: "Nodes (Smooth Union)",
+            description: "Two overlapping node shapes blended with smooth union.",
+            slug: "nodes_smooth_union",
+            build: |_t| {
+                let body_a = Sdf::rounded_box([-60.0, -30.0], [80.0, 50.0], 8.0);
+                let pin_a1 = Sdf::circle([-140.0, -45.0], 6.0);
+                let pin_a2 = Sdf::circle([20.0, -30.0], 6.0);
+                let node_a = body_a - pin_a1 - pin_a2;
+
+                let body_b = Sdf::rounded_box([60.0, 30.0], [80.0, 50.0], 8.0);
+                let pin_b1 = Sdf::circle([-20.0, 30.0], 6.0);
+                let pin_b2 = Sdf::circle([140.0, 45.0], 6.0);
+                let node_b = body_b - pin_b1 - pin_b2;
+
+                node_a.union_smooth(node_b, 20.0)
+            },
+            layers: default_layers,
+            extent: 160.0,
+        },
+        ShapeEntry {
             name: "Edge (Arrowed)",
             description: "Animated arrowed bezier edge between two node pins.",
             slug: "edge_arrowed",
@@ -684,7 +704,15 @@ fn edge_bezier(_t: f32) -> Sdf {
     let from = [-120.0, -40.0];
     let to = [120.0, 40.0];
     let offset = 80.0;
-    Sdf::bezier(from, [from[0] + offset, from[1]], [to[0] - offset, to[1]], to)
+    let fwd = Sdf::bezier(from, [from[0] + offset, from[1]], [to[0] - offset, to[1]], to);
+    // Mirror across vertical center axis (negate x)
+    let mir = Sdf::bezier(
+        [-from[0], from[1]],
+        [-(from[0] + offset), from[1]],
+        [-(to[0] - offset), to[1]],
+        [-to[0], to[1]],
+    );
+    fwd | mir
 }
 
 /// Build the multi-layer stack for an edge with the given stroke pattern.

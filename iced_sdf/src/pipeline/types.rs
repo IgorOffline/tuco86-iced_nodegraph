@@ -26,7 +26,8 @@ pub struct Uniforms {
     pub num_ops: u32,
     /// Total number of layers in the buffer.
     pub num_layers: u32,
-    pub _pad: u32,
+    /// Debug visualization flags (bit 0: show tile borders).
+    pub debug_flags: u32,
 }
 
 /// A single shape instance in the batch.

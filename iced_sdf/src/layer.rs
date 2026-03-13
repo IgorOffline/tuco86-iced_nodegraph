@@ -19,28 +19,17 @@ const FLAG_DISTANCE_FIELD: u32 = 8;
 /// like shadows, outlines, and gradients.
 #[derive(Debug, Clone)]
 pub struct Layer {
-    /// Fill color.
-    pub color: Color,
-    /// Gradient end color (if using gradient).
-    pub gradient_color: Option<Color>,
-    /// Gradient along u (arc-length) instead of angle.
-    pub gradient_along_u: bool,
-    /// Gradient angle in radians.
-    pub gradient_angle: f32,
-    /// Expand/contract amount (positive = expand).
-    pub expand: f32,
-    /// Blur amount (gaussian blur radius).
-    pub blur: f32,
-    /// Optional pattern for stroke rendering.
-    pub pattern: Option<Pattern>,
-    /// Distance field visualization mode (IQ style).
-    pub distance_field: bool,
-    /// Outline thickness (0 = no outline).
-    pub outline_thickness: f32,
-    /// Outline color.
-    pub outline_color: Color,
-    /// Offset for shadow effects (x, y in world units).
-    pub offset: [f32; 2],
+    color: Color,
+    gradient_color: Option<Color>,
+    gradient_along_u: bool,
+    gradient_angle: f32,
+    expand: f32,
+    blur: f32,
+    pattern: Option<Pattern>,
+    distance_field: bool,
+    outline_thickness: f32,
+    outline_color: Color,
+    offset: [f32; 2],
 }
 
 impl Layer {
@@ -147,6 +136,18 @@ impl Layer {
         self
     }
 
+    /// Set gradient end color.
+    pub fn gradient_color(mut self, color: Color) -> Self {
+        self.gradient_color = Some(color);
+        self
+    }
+
+    /// Set gradient along arc-length (u parameter).
+    pub fn gradient_along_u(mut self, along_u: bool) -> Self {
+        self.gradient_along_u = along_u;
+        self
+    }
+
     /// Set arc-length gradient scale (used with `gradient_u`).
     ///
     /// Pass `1.0 / total_arc_length` to normalize the gradient to 0..1
@@ -176,6 +177,37 @@ impl Layer {
     pub fn with_pattern(mut self, pattern: Pattern) -> Self {
         self.pattern = Some(pattern);
         self
+    }
+
+    /// Compute the effective signed distance to this layer's visible boundary.
+    ///
+    /// For solid fills: same as raw dist (adjusted by expand).
+    /// For strokes: `|raw_dist - expand| - thickness/2`.
+    pub fn visual_distance(&self, raw_dist: f32) -> f32 {
+        let d = raw_dist - self.expand;
+        match &self.pattern {
+            Some(p) => d.abs() - p.thickness * 0.5,
+            None => d,
+        }
+    }
+
+    /// Maximum radius of visual effect beyond the shape boundary.
+    ///
+    /// Used for tile culling: a tile can be skipped if the SDF distance
+    /// minus the tile half-diagonal exceeds this radius.
+    ///
+    /// Returns `f32::INFINITY` for distance field layers, since they
+    /// render color bands at every distance and need the full quad.
+    pub fn max_effect_radius(&self) -> f32 {
+        if self.distance_field {
+            return f32::INFINITY;
+        }
+        self.expand.abs()
+            + self.blur
+            + self.outline_thickness
+            + self.pattern
+                .map(|p| p.thickness * 0.5)
+                .unwrap_or(0.0)
     }
 
     /// Convert to GPU representation.
@@ -292,5 +324,29 @@ mod tests {
         let layer = Layer::stroke(Color::WHITE, Pattern::solid(3.0).flow(100.0));
         let gpu = layer.to_gpu();
         assert_eq!(gpu.flow_speed, 100.0);
+    }
+
+    #[test]
+    fn test_max_effect_radius() {
+        let layer = Layer::solid(Color::WHITE).expand(5.0).blur(3.0).outline(2.0, Color::BLACK);
+        assert_eq!(layer.max_effect_radius(), 10.0); // 5 + 3 + 2
+
+        let layer = Layer::stroke(Color::WHITE, Pattern::solid(4.0));
+        assert_eq!(layer.max_effect_radius(), 2.0); // pattern thickness * 0.5
+
+        let layer = Layer::distance_field(Color::WHITE, Color::BLACK);
+        assert!(layer.max_effect_radius().is_infinite());
+    }
+
+    #[test]
+    fn test_builder_methods() {
+        let layer = Layer::solid(Color::WHITE)
+            .gradient_color(Color::BLACK)
+            .gradient_along_u(true)
+            .gradient_scale(0.5);
+        let gpu = layer.to_gpu();
+        assert_eq!(gpu.flags & FLAG_GRADIENT, FLAG_GRADIENT);
+        assert_eq!(gpu.flags & FLAG_GRADIENT_U, FLAG_GRADIENT_U);
+        assert_eq!(gpu.gradient_angle, 0.5);
     }
 }

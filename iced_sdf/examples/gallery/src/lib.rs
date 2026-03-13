@@ -401,11 +401,11 @@ impl EdgeEditorState {
 
         // Border background (gap fill) - renders even when border_thickness=0
         if self.border_visible && (self.border_background[3] > 0.001 || self.border_background_end[3] > 0.001) {
-            let mut bg = Layer::solid(color_from(self.border_background))
-                .expand(border_outer);
-            bg.gradient_color = Some(color_from(self.border_background_end));
-            bg.gradient_along_u = true;
-            bg.gradient_angle = arc_scale;
+            let bg = Layer::solid(color_from(self.border_background))
+                .expand(border_outer)
+                .gradient_color(color_from(self.border_background_end))
+                .gradient_along_u(true)
+                .gradient_scale(arc_scale);
             layers.push(bg);
         }
 
@@ -415,10 +415,10 @@ impl EdgeEditorState {
                 color_from(self.border_color),
                 Pattern::solid(self.border_thickness),
             )
-            .expand(border_center);
-            border.gradient_color = Some(color_from(self.border_color_end));
-            border.gradient_along_u = true;
-            border.gradient_angle = arc_scale;
+            .expand(border_center)
+            .gradient_color(color_from(self.border_color_end))
+            .gradient_along_u(true)
+            .gradient_scale(arc_scale);
             if self.border_outline_thickness > 0.01 {
                 border = border.outline(self.border_outline_thickness, color_from(self.border_outline_color));
             }
@@ -427,10 +427,10 @@ impl EdgeEditorState {
 
         // Stroke
         if self.stroke_visible {
-            let mut stroke = Layer::stroke(color_from(self.stroke_color), self.build_pattern());
-            stroke.gradient_color = Some(color_from(self.stroke_color_end));
-            stroke.gradient_along_u = true;
-            stroke.gradient_angle = arc_scale;
+            let mut stroke = Layer::stroke(color_from(self.stroke_color), self.build_pattern())
+                .gradient_color(color_from(self.stroke_color_end))
+                .gradient_along_u(true)
+                .gradient_scale(arc_scale);
             if self.stroke_outline_thickness > 0.01 {
                 stroke = stroke.outline(self.stroke_outline_thickness, color_from(self.stroke_outline_color));
             }
@@ -528,6 +528,7 @@ struct App {
     embed: bool,
     start_time: Instant,
     editor: Option<EdgeEditorState>,
+    debug_tiles: bool,
     #[cfg(not(target_arch = "wasm32"))]
     screenshot: ScreenshotHelper,
 }
@@ -541,6 +542,7 @@ enum Message {
     SetColorChannel(ColorParam, usize, f32),
     ToggleLayer(LayerKind, bool),
     ToggleColorEditor(ColorParam),
+    ToggleDebugTiles(bool),
     #[cfg(not(target_arch = "wasm32"))]
     Screenshot(demo_common::ScreenshotMessage),
 }
@@ -561,6 +563,7 @@ impl App {
                 embed,
                 start_time: Instant::now(),
                 editor,
+                debug_tiles: false,
                 #[cfg(not(target_arch = "wasm32"))]
                 screenshot: ScreenshotHelper::from_args(),
             },
@@ -610,6 +613,9 @@ impl App {
                     }
                 }
             }
+            Message::ToggleDebugTiles(enabled) => {
+                self.debug_tiles = enabled;
+            }
             Message::ToggleColorEditor(param) => {
                 if let Some(e) = &mut self.editor
                     && !e.expanded_colors.remove(&param)
@@ -635,7 +641,7 @@ impl App {
 
         // Embed mode: only the SDF canvas, no sidebar or text
         if self.embed {
-            let sdf_view = widget::sdf_canvas(entry, elapsed, None);
+            let sdf_view = widget::sdf_canvas(entry, elapsed, None, false);
             return container(sdf_view).width(Fill).height(Fill).into();
         }
 
@@ -676,7 +682,7 @@ impl App {
             let description = text(entry.description).size(13);
 
             let layer_override = self.editor.as_ref().map(|e| e.build_layers());
-            let sdf_view = widget::sdf_canvas(entry, elapsed, layer_override);
+            let sdf_view = widget::sdf_canvas(entry, elapsed, layer_override, self.debug_tiles);
 
             let mut content = column![title, description]
                 .spacing(8)
@@ -685,7 +691,7 @@ impl App {
                 .height(Fill);
 
             if let Some(editor) = &self.editor {
-                content = content.push(edge_editor_ui(editor));
+                content = content.push(edge_editor_ui(editor, self.debug_tiles));
             }
 
             content.push(sdf_view)
@@ -699,8 +705,8 @@ impl App {
 // Edge editor UI (three-column layout)
 // ---------------------------------------------------------------------------
 
-fn edge_editor_ui(editor: &EdgeEditorState) -> Element<'static, Message> {
-    let col_layers = layers_column(editor);
+fn edge_editor_ui(editor: &EdgeEditorState, debug_tiles: bool) -> Element<'static, Message> {
+    let col_layers = layers_column(editor, debug_tiles);
     let col_stroke = stroke_column(editor);
     let col_common = common_column(editor);
 
@@ -713,7 +719,7 @@ fn edge_editor_ui(editor: &EdgeEditorState) -> Element<'static, Message> {
     .into()
 }
 
-fn layers_column(editor: &EdgeEditorState) -> Element<'static, Message> {
+fn layers_column(editor: &EdgeEditorState, debug_tiles: bool) -> Element<'static, Message> {
     column![
         section_header("Layers"),
         toggler(editor.shadow_visible)
@@ -729,6 +735,12 @@ fn layers_column(editor: &EdgeEditorState) -> Element<'static, Message> {
         toggler(editor.stroke_visible)
             .label("Stroke")
             .on_toggle(|v| Message::ToggleLayer(LayerKind::Stroke, v))
+            .size(16)
+            .text_size(12),
+        section_header("Debug"),
+        toggler(debug_tiles)
+            .label("Tile Culling")
+            .on_toggle(Message::ToggleDebugTiles)
             .size(16)
             .text_size(12),
     ]
@@ -794,8 +806,11 @@ fn stroke_column(editor: &EdgeEditorState) -> Element<'static, Message> {
         .push(color_editor("Start", editor.stroke_color, ColorParam::StrokeColor, exp.contains(&ColorParam::StrokeColor)))
         .push(color_editor("End", editor.stroke_color_end, ColorParam::StrokeColorEnd, exp.contains(&ColorParam::StrokeColorEnd)))
         .push(float_slider("Outline", FloatParam::StrokeOutlineThickness, 0.0, 20.0, 0.1, editor.stroke_outline_thickness))
-        .push(color_editor("Outline", editor.stroke_outline_color, ColorParam::StrokeOutlineColor, exp.contains(&ColorParam::StrokeOutlineColor)))
-        .push(float_slider("Flow", FloatParam::FlowSpeed, 0.0, 100.0, 1.0, editor.flow_speed));
+        .push(color_editor("Outline", editor.stroke_outline_color, ColorParam::StrokeOutlineColor, exp.contains(&ColorParam::StrokeOutlineColor)));
+
+    if editor.pattern_kind != PatternKind::Solid {
+        col = col.push(float_slider("Flow", FloatParam::FlowSpeed, -10.0, 10.0, 0.1, editor.flow_speed));
+    }
 
     col.width(Fill).into()
 }

@@ -1470,6 +1470,7 @@ dependencies = [
  "glam",
  "iced",
  "iced_wgpu",
+ "smallvec",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@
 //! rendering. Each shape gets a screen-space quad; the fragment shader
 //! evaluates only that shape's RPN ops within the quad.
 
-use crate::compile::compile;
+use crate::compile::compile_into;
 use crate::layer::Layer;
 use crate::pipeline::types::{ShapeInstance, SdfLayer, SdfOp};
 use crate::shape::Sdf;
@@ -22,6 +22,8 @@ pub struct SdfBatch {
     ops: Vec<SdfOp>,
     /// Flat array of all GPU layers.
     layers: Vec<SdfLayer>,
+    /// Scratch buffer reused across push() calls for compilation.
+    compile_scratch: Vec<SdfOp>,
 }
 
 impl SdfBatch {
@@ -31,6 +33,7 @@ impl SdfBatch {
             shapes: Vec::new(),
             ops: Vec::new(),
             layers: Vec::new(),
+            compile_scratch: Vec::new(),
         }
     }
 
@@ -40,6 +43,7 @@ impl SdfBatch {
             shapes: Vec::with_capacity(shapes),
             ops: Vec::with_capacity(ops),
             layers: Vec::with_capacity(layers),
+            compile_scratch: Vec::new(),
         }
     }
 
@@ -53,10 +57,10 @@ impl SdfBatch {
         let ops_offset = self.ops.len() as u32;
         let layers_offset = self.layers.len() as u32;
 
-        // Compile SDF tree to RPN ops
-        let compiled = compile(shape.node());
-        let ops_count = compiled.len() as u32;
-        self.ops.extend(compiled);
+        // Compile SDF tree to RPN ops (reuses scratch buffer)
+        compile_into(shape.node(), &mut self.compile_scratch);
+        let ops_count = self.compile_scratch.len() as u32;
+        self.ops.extend_from_slice(&self.compile_scratch);
 
         // Convert layers to GPU format
         let layers_count = shape_layers.len() as u32;
@@ -116,6 +120,26 @@ impl SdfBatch {
     /// Access the flat layers buffer.
     pub fn gpu_layers(&self) -> &[SdfLayer] {
         &self.layers
+    }
+
+    /// Upload the batch contents to GPU pipeline buffers using bulk writes.
+    ///
+    /// This is the efficient path for submitting a pre-built batch to the
+    /// pipeline. Uses `push_bulk` for single-write-per-buffer uploads.
+    pub fn upload(
+        &self,
+        shapes_buffer: &mut crate::pipeline::Buffer<ShapeInstance>,
+        ops_buffer: &mut crate::pipeline::Buffer<SdfOp>,
+        layers_buffer: &mut crate::pipeline::Buffer<SdfLayer>,
+        device: &iced::wgpu::Device,
+        queue: &iced::wgpu::Queue,
+    ) {
+        if self.is_empty() {
+            return;
+        }
+        let _ = ops_buffer.push_bulk(device, queue, &self.ops);
+        let _ = layers_buffer.push_bulk(device, queue, &self.layers);
+        let _ = shapes_buffer.push_bulk(device, queue, &self.shapes);
     }
 }
 

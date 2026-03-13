@@ -31,18 +31,13 @@ thread_local! {
 }
 
 /// Shared GPU resources for SDF rendering.
-#[allow(dead_code)]
+///
+/// `_shader_module` and `_pipeline_layout` are retained to prevent Drop
+/// while the render pipeline references them.
 pub struct SharedSdfResources {
-    /// Compiled shader module.
-    pub shader_module: ShaderModule,
-
-    /// Bind group layout for all SDF pipelines.
+    _shader_module: ShaderModule,
     pub bind_group_layout: BindGroupLayout,
-
-    /// Pipeline layout.
-    pub pipeline_layout: PipelineLayout,
-
-    /// Main render pipeline.
+    _pipeline_layout: PipelineLayout,
     pub render_pipeline: RenderPipeline,
 }
 
@@ -92,9 +87,9 @@ impl SharedSdfResources {
             create_render_pipeline(device, format, &pipeline_layout, &shader_module);
 
         Self {
-            shader_module,
+            _shader_module: shader_module,
             bind_group_layout,
-            pipeline_layout,
+            _pipeline_layout: pipeline_layout,
             render_pipeline,
         }
     }

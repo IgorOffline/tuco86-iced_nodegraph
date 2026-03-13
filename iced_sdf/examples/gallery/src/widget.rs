@@ -19,6 +19,7 @@ pub fn sdf_canvas<'a>(
     entry: &ShapeEntry,
     time: f32,
     layer_override: Option<Vec<Layer>>,
+    debug_tiles: bool,
 ) -> Element<'a, crate::Message> {
     let shape = (entry.build)(time);
     let layers = layer_override.unwrap_or_else(|| (entry.layers)());
@@ -28,6 +29,7 @@ pub fn sdf_canvas<'a>(
         layers,
         time,
         extent: entry.extent,
+        debug_tiles,
     };
 
     container(canvas)
@@ -43,6 +45,7 @@ struct SdfCanvas {
     layers: Vec<Layer>,
     time: f32,
     extent: f32,
+    debug_tiles: bool,
 }
 
 impl<Message, Renderer> iced::advanced::Widget<Message, Theme, Renderer> for SdfCanvas
@@ -92,7 +95,8 @@ where
             .layers(self.layers.clone())
             .screen_bounds([bounds.x, bounds.y, bounds.width, bounds.height])
             .camera(cam_x, cam_y, zoom)
-            .time(self.time);
+            .time(self.time)
+            .debug_tiles(self.debug_tiles);
 
         renderer.draw_primitive(bounds, primitive);
 
@@ -103,7 +107,13 @@ where
             let cursor_world = glam::Vec2::new(cursor_world_x, cursor_world_y);
 
             let result = iced_sdf::evaluate(self.shape.node(), cursor_world);
-            let dist = result.dist.abs();
+
+            // Use the topmost layer's visual distance (stroke boundary, not raw SDF)
+            let dist = self
+                .layers
+                .last()
+                .map(|l| l.visual_distance(result.dist).abs())
+                .unwrap_or(result.dist.abs());
 
             // Dot at cursor position (3px radius in screen space)
             let dot_radius = 3.0 / zoom;

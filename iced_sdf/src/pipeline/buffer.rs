@@ -122,6 +122,57 @@ impl<T> Buffer<T> {
         queue.write_buffer(&self.buffer_wgpu, 0, &self.scratch);
     }
 
+    /// Push multiple items at once with a single GPU write.
+    ///
+    /// Returns the starting slot index.
+    #[must_use]
+    pub fn push_bulk(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        items: &[T],
+    ) -> usize
+    where
+        T: ShaderType + ShaderSize + WriteInto + Clone,
+    {
+        if items.is_empty() {
+            return self.buffer_vec.len();
+        }
+
+        let start_slot = self.buffer_vec.len();
+        self.buffer_vec.extend_from_slice(items);
+
+        let item_size = T::SHADER_SIZE.get() as usize;
+        let required_size = self.buffer_vec.len() * item_size;
+
+        if self.buffer_wgpu.size() < required_size as u64 {
+            let new_size = ((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
+                .max(BUFFER_MIN_CAPACITY as u64 * 256);
+            self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
+            self.generation += 1;
+            self.rewrite_all(queue);
+        } else {
+            let total_write = items.len() * item_size;
+            let offset = start_slot * item_size;
+
+            self.scratch.clear();
+            self.scratch.resize(total_write, 0);
+
+            for (i, item) in items.iter().enumerate() {
+                let item_offset = i * item_size;
+                let slice = &mut self.scratch[item_offset..item_offset + item_size];
+                let mut writer = encase::StorageBuffer::new(slice);
+                writer
+                    .write(item)
+                    .expect("Failed to write to storage buffer");
+            }
+
+            queue.write_buffer(&self.buffer_wgpu, offset as u64, &self.scratch);
+        }
+
+        start_slot
+    }
+
     /// Clear the buffer for next frame.
     pub fn clear(&mut self) {
         self.buffer_vec.clear();

@@ -191,6 +191,8 @@ fn resolve_edge_color(color: iced::Color, pin_color: iced::Color) -> iced::Color
 }
 
 /// Build SDF layers from an EdgeStyle, resolving pin color inheritance.
+/// Build SDF layers from an EdgeStyle, resolving pin color inheritance.
+/// All patterns are applied at the layer level so shadow/border stay continuous.
 fn edge_sdf_layers(
     style: &crate::style::EdgeStyle,
     start_pin_color: iced::Color,
@@ -212,7 +214,7 @@ fn edge_sdf_layers(
         (PinDirection::Input, PinDirection::Output)
     );
 
-    // Shadow layer (behind everything)
+    // Shadow layer (behind everything) - always continuous around the curve
     if let Some(shadow) = &style.shadow
         && shadow.color.a > 0.0
     {
@@ -224,7 +226,7 @@ fn edge_sdf_layers(
         );
     }
 
-    // Border layer (behind stroke)
+    // Border layer (behind stroke) - always continuous around the curve
     if let Some(border) = &style.border
         && border.width > 0.0
     {
@@ -244,7 +246,7 @@ fn edge_sdf_layers(
         );
     }
 
-    // Stroke layer (front)
+    // Stroke layer (front) - pattern applied here only
     if let Some(stroke) = &style.stroke {
         let stroke_start = resolve_edge_color(stroke.start_color, start_pin_color);
         let stroke_end = resolve_edge_color(stroke.end_color, end_pin_color);
@@ -260,7 +262,12 @@ fn edge_sdf_layers(
         let pattern = match &stroke.pattern {
             crate::style::StrokePattern::Solid => Pattern::solid(stroke.width),
             crate::style::StrokePattern::Dashed { dash, gap, .. } => {
-                Pattern::dashed(stroke.width, *dash, *gap)
+                if let crate::style::DashCap::Angled { angle_rad } = stroke.dash_cap {
+                    let a = if is_reversed { -angle_rad } else { angle_rad };
+                    Pattern::dashed_angle(stroke.width, *dash, *gap, a)
+                } else {
+                    Pattern::dashed(stroke.width, *dash, *gap)
+                }
             }
             crate::style::StrokePattern::Arrowed {
                 segment,
@@ -274,10 +281,9 @@ fn edge_sdf_layers(
             crate::style::StrokePattern::Dotted {
                 spacing, radius, ..
             } => Pattern::dotted(*spacing, *radius),
-            // DashDotted and Custom fall back to dashed approximation
-            crate::style::StrokePattern::DashDotted { dash, gap, .. } => {
-                Pattern::dashed(stroke.width, *dash, *gap)
-            }
+            crate::style::StrokePattern::DashDotted {
+                dash, gap, dot_radius, ..
+            } => Pattern::dash_dotted(stroke.width, *dash, *gap, *dot_radius),
             crate::style::StrokePattern::Custom { .. } => Pattern::solid(stroke.width),
         };
 

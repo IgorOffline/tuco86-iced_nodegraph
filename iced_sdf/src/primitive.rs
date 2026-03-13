@@ -16,11 +16,21 @@ use iced::Rectangle;
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::{Pipeline, Primitive};
 
-use crate::compile::compile;
+use smallvec::SmallVec;
+
+use crate::compile::compile_into;
+use crate::eval;
 use crate::layer::Layer;
 use crate::pipeline::{buffer, types};
 use crate::shape::Sdf;
 use crate::shared::SharedSdfResources;
+
+/// Tile size in pixels for culling.
+const TILE_SIZE: f32 = 16.0;
+
+/// Minimum shape dimension (in pixels) to bother tiling.
+/// Shapes smaller than this skip tiling entirely.
+const MIN_TILING_SIZE: f32 = 64.0;
 
 /// A single SDF shape primitive for rendering.
 ///
@@ -31,8 +41,8 @@ use crate::shared::SharedSdfResources;
 pub struct SdfPrimitive {
     /// The SDF shape to render.
     pub shape: Sdf,
-    /// Rendering layers (back to front).
-    pub layers: Vec<Layer>,
+    /// Rendering layers (back to front). Inline for 1-3 layers (common case).
+    pub layers: SmallVec<[Layer; 3]>,
     /// Screen-space bounding box [x, y, width, height] for the instanced quad.
     pub screen_bounds: [f32; 4],
     /// Camera position (world origin offset).
@@ -41,6 +51,10 @@ pub struct SdfPrimitive {
     pub camera_zoom: f32,
     /// Animation time in seconds.
     pub time: f32,
+    /// Tile size override. None = use default TILE_SIZE. Some(0) = disable tiling.
+    pub tile_size: Option<u32>,
+    /// Debug visualization flags (bit 0: show tile borders).
+    pub debug_flags: u32,
 }
 
 impl SdfPrimitive {
@@ -48,17 +62,19 @@ impl SdfPrimitive {
     pub fn new(shape: Sdf) -> Self {
         Self {
             shape,
-            layers: vec![Layer::solid(iced::Color::WHITE)],
+            layers: smallvec::smallvec![Layer::solid(iced::Color::WHITE)],
             screen_bounds: [0.0, 0.0, 100.0, 100.0],
             camera_position: (0.0, 0.0),
             camera_zoom: 1.0,
             time: 0.0,
+            tile_size: None,
+            debug_flags: 0,
         }
     }
 
     /// Set rendering layers.
-    pub fn layers(mut self, layers: Vec<Layer>) -> Self {
-        self.layers = layers;
+    pub fn layers(mut self, layers: impl Into<SmallVec<[Layer; 3]>>) -> Self {
+        self.layers = layers.into();
         self
     }
 
@@ -80,6 +96,23 @@ impl SdfPrimitive {
         self.time = time;
         self
     }
+
+    /// Set tile size for culling. `None` uses default (16px), `Some(0)` disables tiling.
+    pub fn tile_size(mut self, size: Option<u32>) -> Self {
+        self.tile_size = size;
+        self
+    }
+
+    /// Set debug visualization flags (bit 0: show tile borders).
+    pub fn debug_flags(mut self, flags: u32) -> Self {
+        self.debug_flags = flags;
+        self
+    }
+
+    /// Enable or disable tile culling debug overlay.
+    pub fn debug_tiles(self, enabled: bool) -> Self {
+        self.debug_flags(if enabled { 1 } else { 0 })
+    }
 }
 
 /// Shared pipeline for all SDF primitives.
@@ -94,10 +127,14 @@ pub struct SdfPipeline {
     layers_buffer: buffer::Buffer<types::SdfLayer>,
     bind_group: BindGroup,
     bind_group_generations: (u64, u64, u64),
-    /// Slot counter incremented during prepare() to track shape index.
-    prepare_slot: u32,
-    /// Atomic slot counter for draw() to match prepare order.
-    draw_slot: AtomicU32,
+    /// Tile counts per primitive (how many ShapeInstances each prepare() emitted).
+    tile_counts: Vec<u32>,
+    /// Atomic index into tile_counts for draw() calls.
+    draw_index: AtomicU32,
+    /// Scratch buffer reused across prepare calls for SDF compilation.
+    compile_scratch: Vec<types::SdfOp>,
+    /// Scratch buffer reused for uniform serialization.
+    uniform_scratch: Vec<u8>,
 }
 
 impl Pipeline for SdfPipeline {
@@ -160,8 +197,10 @@ impl Pipeline for SdfPipeline {
             layers_buffer,
             bind_group,
             bind_group_generations: (0, 0, 0),
-            prepare_slot: 0,
-            draw_slot: AtomicU32::new(0),
+            tile_counts: Vec::new(),
+            draw_index: AtomicU32::new(0),
+            compile_scratch: Vec::new(),
+            uniform_scratch: Vec::new(),
         }
     }
 
@@ -169,8 +208,8 @@ impl Pipeline for SdfPipeline {
         self.shapes_buffer.clear();
         self.ops_buffer.clear();
         self.layers_buffer.clear();
-        self.prepare_slot = 0;
-        self.draw_slot.store(0, Ordering::Relaxed);
+        self.tile_counts.clear();
+        self.draw_index.store(0, Ordering::Relaxed);
     }
 }
 
@@ -185,42 +224,129 @@ impl Primitive for SdfPrimitive {
         bounds: &Rectangle,
         viewport: &Viewport,
     ) {
-        // Compile SDF tree to RPN ops
-        let compiled_ops = compile(self.shape.node());
+        // Compile SDF tree to RPN ops (reuses scratch buffer)
+        compile_into(self.shape.node(), &mut pipeline.compile_scratch);
         let ops_offset = pipeline.ops_buffer.len() as u32;
-        let ops_count = compiled_ops.len() as u32;
+        let ops_count = pipeline.compile_scratch.len() as u32;
+        let _ = pipeline
+            .ops_buffer
+            .push_bulk(device, queue, &pipeline.compile_scratch);
 
-        for op in &compiled_ops {
-            let _ = pipeline.ops_buffer.push(device, queue, op.clone());
-        }
-
-        // Convert and push layers
+        // Convert and push layers (bulk)
         let layers_offset = pipeline.layers_buffer.len() as u32;
         let layers_count = self.layers.len() as u32;
+        let gpu_layers: Vec<_> = self.layers.iter().map(|l| l.to_gpu()).collect();
+        let _ = pipeline
+            .layers_buffer
+            .push_bulk(device, queue, &gpu_layers);
 
-        for layer in &self.layers {
-            let _ = pipeline.layers_buffer.push(device, queue, layer.to_gpu());
-        }
+        // Determine effective tile size
+        let effective_tile_size = match self.tile_size {
+            Some(0) => 0.0, // tiling disabled
+            Some(ts) => ts as f32,
+            None => TILE_SIZE,
+        };
 
-        // Push shape instance
-        let _ = pipeline.shapes_buffer.push(
-            device,
-            queue,
-            types::ShapeInstance {
-                bounds: glam::Vec4::new(
-                    self.screen_bounds[0],
-                    self.screen_bounds[1],
-                    self.screen_bounds[2],
-                    self.screen_bounds[3],
-                ),
-                ops_offset,
-                ops_count,
-                layers_offset,
-                layers_count,
-            },
-        );
+        let [sx, sy, sw, sh] = self.screen_bounds;
+        let use_tiling = effective_tile_size > 0.0
+            && sw >= MIN_TILING_SIZE
+            && sh >= MIN_TILING_SIZE;
 
-        pipeline.prepare_slot += 1;
+        let tile_count = if use_tiling {
+            // Compute max effect radius from all layers
+            let max_radius = self.layers.iter().map(|l| l.max_effect_radius()).fold(0.0f32, f32::max);
+
+            let tile = effective_tile_size;
+            let tile_half_diag = tile * std::f32::consts::FRAC_1_SQRT_2;
+            let inv_zoom = 1.0 / self.camera_zoom;
+
+            let cols = ((sw / tile).ceil() as u32).max(1);
+            let rows = ((sh / tile).ceil() as u32).max(1);
+
+            let mut count = 0u32;
+            for row in 0..rows {
+                for col in 0..cols {
+                    // Tile bounds in screen space
+                    let tx = sx + col as f32 * tile;
+                    let ty = sy + row as f32 * tile;
+                    let tw = tile.min(sx + sw - tx);
+                    let th = tile.min(sy + sh - ty);
+
+                    // Tile center in screen space -> world space
+                    let center_sx = tx + tw * 0.5;
+                    let center_sy = ty + th * 0.5;
+                    let world_x = center_sx * inv_zoom - self.camera_position.0;
+                    let world_y = center_sy * inv_zoom - self.camera_position.1;
+
+                    // Evaluate SDF at tile center
+                    let result = eval::evaluate(
+                        self.shape.node(),
+                        glam::Vec2::new(world_x, world_y),
+                    );
+
+                    // Convert tile half-diagonal to world space for comparison
+                    let world_half_diag = tile_half_diag * inv_zoom;
+
+                    // Skip tile if guaranteed outside effect radius.
+                    // Uses abs(dist): tiles far outside (dist >> 0) AND tiles
+                    // far inside (dist << 0) are both safe to skip -- the inside
+                    // case handles stroke-only shapes where the interior is transparent,
+                    // and for filled shapes the interior tiles are rarely far enough
+                    // from the boundary to be culled anyway.
+                    if result.dist.abs() - world_half_diag > max_radius {
+                        continue;
+                    }
+
+                    let _ = pipeline.shapes_buffer.push(
+                        device,
+                        queue,
+                        types::ShapeInstance {
+                            bounds: glam::Vec4::new(tx, ty, tw, th),
+                            ops_offset,
+                            ops_count,
+                            layers_offset,
+                            layers_count,
+                        },
+                    );
+                    count += 1;
+                }
+            }
+
+            // If all tiles were culled, emit at least one (the full shape)
+            // to avoid visual artifacts from rounding
+            if count == 0 {
+                let _ = pipeline.shapes_buffer.push(
+                    device,
+                    queue,
+                    types::ShapeInstance {
+                        bounds: glam::Vec4::new(sx, sy, sw, sh),
+                        ops_offset,
+                        ops_count,
+                        layers_offset,
+                        layers_count,
+                    },
+                );
+                1
+            } else {
+                count
+            }
+        } else {
+            // No tiling: single instance for the whole shape
+            let _ = pipeline.shapes_buffer.push(
+                device,
+                queue,
+                types::ShapeInstance {
+                    bounds: glam::Vec4::new(sx, sy, sw, sh),
+                    ops_offset,
+                    ops_count,
+                    layers_offset,
+                    layers_count,
+                },
+            );
+            1
+        };
+
+        pipeline.tile_counts.push(tile_count);
 
         // Write uniforms every prepare (bounds may change per-primitive)
         let scale = viewport.scale_factor();
@@ -236,14 +362,15 @@ impl Primitive for SdfPrimitive {
             time: self.time,
             num_ops: pipeline.ops_buffer.len() as u32,
             num_layers: pipeline.layers_buffer.len() as u32,
-            _pad: 0,
+            debug_flags: self.debug_flags,
         };
 
-        let mut uniform_buffer = encase::UniformBuffer::new(Vec::new());
-        uniform_buffer
+        pipeline.uniform_scratch.clear();
+        let mut uniform_writer = encase::UniformBuffer::new(&mut pipeline.uniform_scratch);
+        uniform_writer
             .write(&uniforms)
             .expect("Failed to write uniforms");
-        queue.write_buffer(&pipeline.uniform_buffer, 0, uniform_buffer.as_ref());
+        queue.write_buffer(&pipeline.uniform_buffer, 0, &pipeline.uniform_scratch);
 
         // Recreate bind group if any buffer was resized
         let current_generations = (
@@ -283,12 +410,20 @@ impl Primitive for SdfPrimitive {
         pipeline: &Self::Pipeline,
         render_pass: &mut iced::wgpu::RenderPass<'_>,
     ) -> bool {
-        let slot = pipeline.draw_slot.fetch_add(1, Ordering::Relaxed);
+        let index = pipeline.draw_index.fetch_add(1, Ordering::Relaxed) as usize;
+        let tile_count = pipeline
+            .tile_counts
+            .get(index)
+            .copied()
+            .unwrap_or(1);
+
+        // Compute the starting slot by summing all previous tile counts
+        let slot: u32 = pipeline.tile_counts[..index].iter().sum();
 
         render_pass.set_pipeline(&pipeline.shared.render_pipeline);
         render_pass.set_bind_group(0, &pipeline.bind_group, &[]);
-        // Draw one instance (6 vertices for the quad) at the correct instance offset
-        render_pass.draw(0..6, slot..slot + 1);
+        // Draw all tiles for this shape as instanced quads
+        render_pass.draw(0..6, slot..slot + tile_count);
 
         true
     }

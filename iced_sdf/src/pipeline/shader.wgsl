@@ -87,7 +87,7 @@ struct Uniforms {
     time: f32,
     num_ops: u32,
     num_layers: u32,
-    _pad: u32,
+    debug_flags: u32,
 }
 
 struct ShapeInstance {
@@ -1126,6 +1126,7 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) world_pos: vec2<f32>,
     @location(1) @interpolate(flat) instance_id: u32,
+    @location(2) tile_uv: vec2<f32>,
 }
 
 @vertex
@@ -1155,6 +1156,7 @@ fn vs_main(
     out.position = vec4(ndc.x, -ndc.y, 0.0, 1.0);
     out.world_pos = world_pos;
     out.instance_id = instance_index;
+    out.tile_uv = corner;
     return out;
 }
 
@@ -1177,6 +1179,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
         let layer_color = render_layer(layer_sdf, layer);
         color = color * (1.0 - layer_color.a) + layer_color;
+    }
+
+    // Debug: tile border overlay
+    if (uniforms.debug_flags & 1u) != 0u {
+        let tile_size_px = shape.bounds.zw * uniforms.scale_factor;
+        let edge = min(
+            min(in.tile_uv.x, in.tile_uv.y),
+            min(1.0 - in.tile_uv.x, 1.0 - in.tile_uv.y),
+        );
+        let edge_px = edge * min(tile_size_px.x, tile_size_px.y);
+        if edge_px < 1.0 {
+            let ba = (1.0 - edge_px) * 0.7;
+            let bc = vec4(0.0, 1.0, 0.0, ba);
+            color = color * (1.0 - bc.a) + bc;
+        }
+        // Fill: faint tint so culled (absent) tiles are visible by contrast
+        if color.a < 0.001 {
+            return vec4(0.0, 0.15, 0.0, 0.08);
+        }
     }
 
     // Discard fully transparent pixels
