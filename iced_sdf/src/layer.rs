@@ -35,6 +35,12 @@ pub struct Layer {
     pub pattern: Option<Pattern>,
     /// Distance field visualization mode (IQ style).
     pub distance_field: bool,
+    /// Outline thickness (0 = no outline).
+    pub outline_thickness: f32,
+    /// Outline color.
+    pub outline_color: Color,
+    /// Offset for shadow effects (x, y in world units).
+    pub offset: [f32; 2],
 }
 
 impl Layer {
@@ -49,6 +55,9 @@ impl Layer {
             blur: 0.0,
             pattern: None,
             distance_field: false,
+            outline_thickness: 0.0,
+            outline_color: Color::BLACK,
+            offset: [0.0, 0.0],
         }
     }
 
@@ -63,6 +72,9 @@ impl Layer {
             blur: 0.0,
             pattern: None,
             distance_field: false,
+            outline_thickness: 0.0,
+            outline_color: Color::BLACK,
+            offset: [0.0, 0.0],
         }
     }
 
@@ -80,6 +92,9 @@ impl Layer {
             blur: 0.0,
             pattern: None,
             distance_field: false,
+            outline_thickness: 0.0,
+            outline_color: Color::BLACK,
+            offset: [0.0, 0.0],
         }
     }
 
@@ -97,6 +112,9 @@ impl Layer {
             blur: 0.0,
             pattern: None,
             distance_field: true,
+            outline_thickness: 0.0,
+            outline_color: Color::BLACK,
+            offset: [0.0, 0.0],
         }
     }
 
@@ -111,6 +129,9 @@ impl Layer {
             blur: 0.0,
             pattern: Some(pattern),
             distance_field: false,
+            outline_thickness: 0.0,
+            outline_color: Color::BLACK,
+            offset: [0.0, 0.0],
         }
     }
 
@@ -132,6 +153,22 @@ impl Layer {
     /// along the full shape.
     pub fn gradient_scale(mut self, scale: f32) -> Self {
         self.gradient_angle = scale;
+        self
+    }
+
+    /// Add an outline at the boundary of this layer's shape.
+    ///
+    /// The outline follows the same shape as the fill (including patterns).
+    /// For dashed strokes, the outline wraps around each dash.
+    pub fn outline(mut self, thickness: f32, color: Color) -> Self {
+        self.outline_thickness = thickness;
+        self.outline_color = color;
+        self
+    }
+
+    /// Set offset for shadow positioning.
+    pub fn offset(mut self, x: f32, y: f32) -> Self {
+        self.offset = [x, y];
         self
     }
 
@@ -181,6 +218,14 @@ impl Layer {
             pattern_param1,
             pattern_param2,
             flow_speed,
+            outline_color: glam::Vec4::new(
+                self.outline_color.r,
+                self.outline_color.g,
+                self.outline_color.b,
+                self.outline_color.a,
+            ),
+            outline_thickness: self.outline_thickness,
+            offset: glam::Vec2::new(self.offset[0], self.offset[1]),
         }
     }
 }

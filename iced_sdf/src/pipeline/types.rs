@@ -118,6 +118,12 @@ pub struct SdfLayer {
     pub pattern_param2: f32,
     /// Flow animation speed (world units per second).
     pub flow_speed: f32,
+    /// Outline color (RGBA). Outline is drawn at the boundary of the layer shape.
+    pub outline_color: glam::Vec4,
+    /// Outline thickness in world units (0 = no outline).
+    pub outline_thickness: f32,
+    /// Offset for shadow positioning (world units).
+    pub offset: glam::Vec2,
 }
 
 impl Default for SdfLayer {
@@ -135,6 +141,9 @@ impl Default for SdfLayer {
             pattern_param1: 0.0,
             pattern_param2: 0.0,
             flow_speed: 0.0,
+            outline_color: glam::Vec4::ZERO,
+            outline_thickness: 0.0,
+            offset: glam::Vec2::ZERO,
         }
     }
 }

@@ -15,9 +15,13 @@ const CURSOR_COLOR: Color = Color {
 };
 
 /// Create an SDF canvas element that renders a shape entry.
-pub fn sdf_canvas<'a>(entry: &ShapeEntry, time: f32) -> Element<'a, crate::Message> {
+pub fn sdf_canvas<'a>(
+    entry: &ShapeEntry,
+    time: f32,
+    layer_override: Option<Vec<Layer>>,
+) -> Element<'a, crate::Message> {
     let shape = (entry.build)(time);
-    let layers = (entry.layers)();
+    let layers = layer_override.unwrap_or_else(|| (entry.layers)());
 
     let canvas = SdfCanvas {
         shape,

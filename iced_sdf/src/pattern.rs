@@ -9,12 +9,14 @@ pub enum PatternType {
     /// Solid stroke.
     #[default]
     Solid,
-    /// Dashed stroke with round caps.
+    /// Dashed stroke with square caps. Optional angle for parallelogram-shaped caps.
     Dashed {
         /// Length of each dash segment.
         dash: f32,
         /// Gap between dashes.
         gap: f32,
+        /// Angle in radians for parallelogram cap slant (0 = square caps).
+        angle: f32,
     },
     /// Arrowed/angled dashes (like marching ants).
     Arrowed {
@@ -22,7 +24,7 @@ pub enum PatternType {
         segment: f32,
         /// Gap between segments.
         gap: f32,
-        /// Angle in degrees for the shear effect.
+        /// Angle in radians for the shear effect.
         angle: f32,
     },
     /// Dotted pattern.
@@ -31,6 +33,24 @@ pub enum PatternType {
         spacing: f32,
         /// Dot radius.
         radius: f32,
+    },
+    /// Dashed stroke with round caps (capsule SDF).
+    DashCapped {
+        /// Length of each dash segment.
+        dash: f32,
+        /// Gap between dashes.
+        gap: f32,
+        /// Angle in radians for parallelogram cap slant (0 = straight caps).
+        angle: f32,
+    },
+    /// Alternating dash-dot pattern.
+    DashDotted {
+        /// Length of each dash segment.
+        dash: f32,
+        /// Gap between elements.
+        gap: f32,
+        /// Dot radius.
+        dot_radius: f32,
     },
 }
 
@@ -65,11 +85,20 @@ impl Pattern {
         }
     }
 
-    /// Create a dashed pattern.
+    /// Create a dashed pattern with square caps.
     pub fn dashed(thickness: f32, dash: f32, gap: f32) -> Self {
         Self {
             thickness,
-            pattern_type: PatternType::Dashed { dash, gap },
+            pattern_type: PatternType::Dashed { dash, gap, angle: 0.0 },
+            flow_speed: 0.0,
+        }
+    }
+
+    /// Create a dashed pattern with angled parallelogram caps.
+    pub fn dashed_angle(thickness: f32, dash: f32, gap: f32, angle: f32) -> Self {
+        Self {
+            thickness,
+            pattern_type: PatternType::Dashed { dash, gap, angle },
             flow_speed: 0.0,
         }
     }
@@ -83,11 +112,38 @@ impl Pattern {
         }
     }
 
+    /// Create a dashed pattern with round caps (capsule SDF).
+    pub fn dash_capped(thickness: f32, dash: f32, gap: f32) -> Self {
+        Self {
+            thickness,
+            pattern_type: PatternType::DashCapped { dash, gap, angle: 0.0 },
+            flow_speed: 0.0,
+        }
+    }
+
+    /// Create a dashed pattern with round caps and angled shear.
+    pub fn dash_capped_angle(thickness: f32, dash: f32, gap: f32, angle: f32) -> Self {
+        Self {
+            thickness,
+            pattern_type: PatternType::DashCapped { dash, gap, angle },
+            flow_speed: 0.0,
+        }
+    }
+
     /// Create a dotted pattern.
     pub fn dotted(spacing: f32, radius: f32) -> Self {
         Self {
             thickness: radius * 2.0,
             pattern_type: PatternType::Dotted { spacing, radius },
+            flow_speed: 0.0,
+        }
+    }
+
+    /// Create a dash-dotted pattern.
+    pub fn dash_dotted(thickness: f32, dash: f32, gap: f32, dot_radius: f32) -> Self {
+        Self {
+            thickness,
+            pattern_type: PatternType::DashDotted { dash, gap, dot_radius },
             flow_speed: 0.0,
         }
     }
@@ -103,12 +159,18 @@ impl Pattern {
     pub fn to_gpu(&self) -> (u32, f32, f32, f32, f32, f32) {
         match self.pattern_type {
             PatternType::Solid => (0, self.thickness, 0.0, 0.0, 0.0, self.flow_speed),
-            PatternType::Dashed { dash, gap } => (1, self.thickness, dash, gap, 0.0, self.flow_speed),
+            PatternType::Dashed { dash, gap, angle } => (1, self.thickness, dash, gap, angle, self.flow_speed),
             PatternType::Arrowed { segment, gap, angle } => {
-                (2, self.thickness, segment, gap, angle.to_radians(), self.flow_speed)
+                (2, self.thickness, segment, gap, angle, self.flow_speed)
             }
             PatternType::Dotted { spacing, radius } => {
                 (3, self.thickness, spacing, radius, 0.0, self.flow_speed)
+            }
+            PatternType::DashDotted { dash, gap, dot_radius } => {
+                (4, self.thickness, dash, gap, dot_radius, self.flow_speed)
+            }
+            PatternType::DashCapped { dash, gap, angle } => {
+                (5, self.thickness, dash, gap, angle, self.flow_speed)
             }
         }
     }

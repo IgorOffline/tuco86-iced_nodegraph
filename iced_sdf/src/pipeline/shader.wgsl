@@ -68,6 +68,8 @@ const PATTERN_SOLID: u32 = 0u;
 const PATTERN_DASHED: u32 = 1u;
 const PATTERN_ARROWED: u32 = 2u;
 const PATTERN_DOTTED: u32 = 3u;
+const PATTERN_DASH_DOTTED: u32 = 4u;
+const PATTERN_DASH_CAPPED: u32 = 5u;
 
 const PI: f32 = 3.14159265359;
 const MAX_STACK: u32 = 16u;
@@ -119,11 +121,17 @@ struct SdfLayer {
     pattern_param1: f32,
     pattern_param2: f32,
     flow_speed: f32,
+    outline_color: vec4<f32>,
+    outline_thickness: f32,
+    offset: vec2<f32>,
 }
 
 struct SdfResult {
     dist: f32,
     u: f32,
+    /// Signed perpendicular distance. For 2D shapes equals dist (already signed).
+    /// For 1D curves (line, bezier) carries side information via cross product.
+    v: f32,
 }
 
 // ============================================================================
@@ -139,11 +147,16 @@ struct SdfResult {
 // SDF Primitives
 // ============================================================================
 
+/// Helper: create SdfResult for a 2D shape (signed dist, no arc-length).
+fn sdf_2d(d: f32) -> SdfResult {
+    return SdfResult(d, 0.0, d);
+}
+
 fn sd_circle(p: vec2<f32>, center: vec2<f32>, radius: f32) -> SdfResult {
     let d = length(p - center) - radius;
     let angle = atan2(p.y - center.y, p.x - center.x);
     let u = (angle + PI) * radius;
-    return SdfResult(d, u);
+    return SdfResult(d, u, d);
 }
 
 fn sd_box(p: vec2<f32>, center: vec2<f32>, half_size: vec2<f32>) -> SdfResult {
@@ -165,23 +178,26 @@ fn sd_box(p: vec2<f32>, center: vec2<f32>, half_size: vec2<f32>) -> SdfResult {
         u = 2.0 * w + h + (h + rel.y);
     }
 
-    return SdfResult(d, u);
+    return SdfResult(d, u, d);
 }
 
 fn sd_rounded_box(p: vec2<f32>, center: vec2<f32>, half_size: vec2<f32>, r: f32) -> SdfResult {
     let q = abs(p - center) - half_size + r;
     let d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
     let base = sd_box(p, center, half_size);
-    return SdfResult(d, base.u);
+    return SdfResult(d, base.u, d);
 }
 
 fn sd_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> SdfResult {
     let pa = p - a;
     let ba = b - a;
     let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-    let d = length(pa - ba * h);
+    let diff = pa - ba * h;
+    let d = length(diff);
     let u = h * length(ba);
-    return SdfResult(d, u);
+    // Signed perpendicular: cross product of direction and diff gives side
+    let side = sign(ba.x * diff.y - ba.y * diff.x);
+    return SdfResult(d, u, side * d);
 }
 
 fn bezier_derivative(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t: f32) -> vec2<f32> {
@@ -260,8 +276,15 @@ fn sd_bezier(p: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2
         best_t = 1.0;
     }
 
+    let best_t2 = best_t * best_t;
+    let best_point = A * best_t2 * best_t + B * best_t2 + C * best_t + D;
+    let tangent = 3.0 * A * best_t2 + 2.0 * B * best_t + C;
+    let diff = p - best_point;
+    let side = sign(tangent.x * diff.y - tangent.y * diff.x);
+    let d = sqrt(min_dist);
+
     let u = bezier_arc_length_to(p0, p1, p2, p3, best_t);
-    return SdfResult(sqrt(min_dist), u);
+    return SdfResult(d, u, side * d);
 }
 
 fn ndot(a: vec2<f32>, b: vec2<f32>) -> f32 {
@@ -630,8 +653,8 @@ fn op_union(a: SdfResult, b: SdfResult) -> SdfResult {
 }
 
 fn op_subtract(a: SdfResult, b: SdfResult) -> SdfResult {
-    if a.dist > -b.dist { return SdfResult(a.dist, a.u); }
-    return SdfResult(-b.dist, b.u);
+    if a.dist > -b.dist { return SdfResult(a.dist, a.u, a.v); }
+    return SdfResult(-b.dist, b.u, -b.v);
 }
 
 fn op_intersect(a: SdfResult, b: SdfResult) -> SdfResult {
@@ -643,22 +666,24 @@ fn op_smooth_union(a: SdfResult, b: SdfResult, k: f32) -> SdfResult {
     let h = clamp(0.5 + 0.5 * (b.dist - a.dist) / k, 0.0, 1.0);
     let d = mix(b.dist, a.dist, h) - k * h * (1.0 - h);
     let u = mix(b.u, a.u, h);
-    return SdfResult(d, u);
+    let v = mix(b.v, a.v, h);
+    return SdfResult(d, u, v);
 }
 
 fn op_smooth_subtract(a: SdfResult, b: SdfResult, k: f32) -> SdfResult {
     let h = clamp(0.5 - 0.5 * (a.dist + b.dist) / k, 0.0, 1.0);
     let d = mix(a.dist, -b.dist, h) + k * h * (1.0 - h);
     let u = mix(a.u, b.u, h);
-    return SdfResult(d, u);
+    let v = mix(a.v, -b.v, h);
+    return SdfResult(d, u, v);
 }
 
 fn op_round(a: SdfResult, r: f32) -> SdfResult {
-    return SdfResult(a.dist - r, a.u);
+    return SdfResult(a.dist - r, a.u, a.v);
 }
 
 fn op_onion(a: SdfResult, thickness: f32) -> SdfResult {
-    return SdfResult(abs(a.dist) - thickness, a.u);
+    return SdfResult(abs(a.dist) - thickness, a.u, a.v);
 }
 
 // ============================================================================
@@ -666,7 +691,7 @@ fn op_onion(a: SdfResult, thickness: f32) -> SdfResult {
 // ============================================================================
 
 fn apply_pattern(sdf: SdfResult, layer: SdfLayer) -> f32 {
-    let dist = sdf.dist;
+    let dist = sdf.dist - layer.expand;
     let thickness = layer.thickness;
 
     var u = sdf.u;
@@ -681,26 +706,26 @@ fn apply_pattern(sdf: SdfResult, layer: SdfLayer) -> f32 {
         case PATTERN_DASHED: {
             let dash = layer.pattern_param0;
             let gap = layer.pattern_param1;
+            let angle = layer.pattern_param2;
             let period = dash + gap;
-            let nearest = round(u / period) * period;
-            let dist_along = u - nearest;
-            let half_dash = dash * 0.5;
-            let clamped = clamp(dist_along, -half_dash, half_dash);
-            let cap_dist = dist_along - clamped;
-            return length(vec2(cap_dist, dist)) - thickness * 0.5;
+            let shifted_u = u - sdf.v * tan(angle);
+            let nearest = round(shifted_u / period) * period;
+            let dist_along = shifted_u - nearest;
+            // Box SDF for square-cap dashes (angle=0 gives straight caps)
+            let dd = abs(vec2(dist_along, dist)) - vec2(dash * 0.5, thickness * 0.5);
+            return length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
         }
         case PATTERN_ARROWED: {
+            // Symmetric crossing slashes (///) - uses abs(v) for symmetric shear
             let segment = layer.pattern_param0;
             let gap = layer.pattern_param1;
             let angle = layer.pattern_param2;
             let period = segment + gap;
-            let shifted_u = u - dist * tan(angle);
+            let shifted_u = u - abs(sdf.v) * tan(angle);
             let nearest = round(shifted_u / period) * period;
             let dist_along = shifted_u - nearest;
-            let half_seg = segment * 0.5;
-            let clamped = clamp(dist_along, -half_seg, half_seg);
-            let cap_dist = dist_along - clamped;
-            return length(vec2(cap_dist, dist)) - thickness * 0.5;
+            let dd = abs(vec2(dist_along, dist)) - vec2(segment * 0.5, thickness * 0.5);
+            return length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
         }
         case PATTERN_DOTTED: {
             let spacing = layer.pattern_param0;
@@ -708,6 +733,40 @@ fn apply_pattern(sdf: SdfResult, layer: SdfLayer) -> f32 {
             let nearest = round(u / spacing) * spacing;
             let dist_to_center = abs(u - nearest);
             return length(vec2(dist_to_center, dist)) - radius;
+        }
+        case PATTERN_DASH_DOTTED: {
+            // param0 = dash, param1 = gap, param2 = dot_radius
+            let dash = layer.pattern_param0;
+            let gap = layer.pattern_param1;
+            let dot_radius = layer.pattern_param2;
+            // Period: dash + gap + dot_diameter + gap
+            let period = dash + gap + dot_radius * 2.0 + gap;
+            let nearest = round(u / period) * period;
+            let local_u = u - nearest;
+            // Dash centered at 0, dot centered at dash/2 + gap + dot_radius
+            let dash_center = 0.0;
+            let dot_center = dash * 0.5 + gap + dot_radius;
+            // Dash SDF (box)
+            let dd = abs(vec2(local_u - dash_center, dist)) - vec2(dash * 0.5, thickness * 0.5);
+            let d_dash = length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
+            // Dot SDF (circle) - check both positive and negative offset
+            let d_dot_pos = length(vec2(local_u - dot_center, dist)) - dot_radius;
+            let d_dot_neg = length(vec2(local_u + dot_center, dist)) - dot_radius;
+            let d_dot = min(d_dot_pos, d_dot_neg);
+            return min(d_dash, d_dot);
+        }
+        case PATTERN_DASH_CAPPED: {
+            // Round-cap dashes using capsule SDF
+            let dash = layer.pattern_param0;
+            let gap = layer.pattern_param1;
+            let angle = layer.pattern_param2;
+            let period = dash + gap;
+            let shifted_u = u - sdf.v * tan(angle);
+            let nearest = round(shifted_u / period) * period;
+            let dist_along = shifted_u - nearest;
+            // Capsule SDF: clamp along dash then measure distance
+            let clamped = clamp(dist_along, -dash * 0.5, dash * 0.5);
+            return length(vec2(dist_along - clamped, dist)) - thickness * 0.5;
         }
         default: {
             return dist;
@@ -749,115 +808,115 @@ fn evaluate_sdf(p: vec2<f32>, shape: ShapeInstance) -> SdfResult {
                 sp++;
             }
             case OP_ELLIPSE: {
-                stack[sp] = SdfResult(sd_ellipse(p, op.param0.xy), 0.0);
+                stack[sp] = sdf_2d(sd_ellipse(p, op.param0.xy));
                 sp++;
             }
             case OP_TRIANGLE: {
-                stack[sp] = SdfResult(sd_triangle(p, op.param0.xy, op.param0.zw, op.param1.xy), 0.0);
+                stack[sp] = sdf_2d(sd_triangle(p, op.param0.xy, op.param0.zw, op.param1.xy));
                 sp++;
             }
             case OP_EQUILATERAL_TRIANGLE: {
-                stack[sp] = SdfResult(sd_equilateral_triangle(p, op.param0.x), 0.0);
+                stack[sp] = sdf_2d(sd_equilateral_triangle(p, op.param0.x));
                 sp++;
             }
             case OP_ISOSCELES_TRIANGLE: {
-                stack[sp] = SdfResult(sd_isosceles_triangle(p, op.param0.xy), 0.0);
+                stack[sp] = sdf_2d(sd_isosceles_triangle(p, op.param0.xy));
                 sp++;
             }
             case OP_RHOMBUS: {
-                stack[sp] = SdfResult(sd_rhombus(p, op.param0.xy), 0.0);
+                stack[sp] = sdf_2d(sd_rhombus(p, op.param0.xy));
                 sp++;
             }
             case OP_TRAPEZOID: {
-                stack[sp] = SdfResult(sd_trapezoid(p, op.param0.x, op.param0.y, op.param0.z), 0.0);
+                stack[sp] = sdf_2d(sd_trapezoid(p, op.param0.x, op.param0.y, op.param0.z));
                 sp++;
             }
             case OP_PARALLELOGRAM: {
-                stack[sp] = SdfResult(sd_parallelogram(p, op.param0.x, op.param0.y, op.param0.z), 0.0);
+                stack[sp] = sdf_2d(sd_parallelogram(p, op.param0.x, op.param0.y, op.param0.z));
                 sp++;
             }
             case OP_PENTAGON: {
-                stack[sp] = SdfResult(sd_pentagon(p, op.param0.x), 0.0);
+                stack[sp] = sdf_2d(sd_pentagon(p, op.param0.x));
                 sp++;
             }
             case OP_HEXAGON: {
-                stack[sp] = SdfResult(sd_hexagon(p, op.param0.x), 0.0);
+                stack[sp] = sdf_2d(sd_hexagon(p, op.param0.x));
                 sp++;
             }
             case OP_OCTAGON: {
-                stack[sp] = SdfResult(sd_octagon(p, op.param0.x), 0.0);
+                stack[sp] = sdf_2d(sd_octagon(p, op.param0.x));
                 sp++;
             }
             case OP_HEXAGRAM: {
-                stack[sp] = SdfResult(sd_hexagram(p, op.param0.x), 0.0);
+                stack[sp] = sdf_2d(sd_hexagram(p, op.param0.x));
                 sp++;
             }
             case OP_STAR: {
-                stack[sp] = SdfResult(sd_star(p, op.param0.x, i32(op.param0.y), op.param0.z), 0.0);
+                stack[sp] = sdf_2d(sd_star(p, op.param0.x, i32(op.param0.y), op.param0.z));
                 sp++;
             }
             case OP_PIE: {
-                stack[sp] = SdfResult(sd_pie(p, op.param0.xy, op.param0.z), 0.0);
+                stack[sp] = sdf_2d(sd_pie(p, op.param0.xy, op.param0.z));
                 sp++;
             }
             case OP_ARC: {
-                stack[sp] = SdfResult(sd_arc(p, op.param0.xy, op.param0.z, op.param0.w), 0.0);
+                stack[sp] = sdf_2d(sd_arc(p, op.param0.xy, op.param0.z, op.param0.w));
                 sp++;
             }
             case OP_CUT_DISK: {
-                stack[sp] = SdfResult(sd_cut_disk(p, op.param0.x, op.param0.y), 0.0);
+                stack[sp] = sdf_2d(sd_cut_disk(p, op.param0.x, op.param0.y));
                 sp++;
             }
             case OP_HEART: {
-                stack[sp] = SdfResult(sd_heart(p), 0.0);
+                stack[sp] = sdf_2d(sd_heart(p));
                 sp++;
             }
             case OP_EGG: {
-                stack[sp] = SdfResult(sd_egg(p, op.param0.x, op.param0.y), 0.0);
+                stack[sp] = sdf_2d(sd_egg(p, op.param0.x, op.param0.y));
                 sp++;
             }
             case OP_MOON: {
-                stack[sp] = SdfResult(sd_moon(p, op.param0.x, op.param0.y, op.param0.z), 0.0);
+                stack[sp] = sdf_2d(sd_moon(p, op.param0.x, op.param0.y, op.param0.z));
                 sp++;
             }
             case OP_VESICA: {
-                stack[sp] = SdfResult(sd_vesica(p, op.param0.x, op.param0.y), 0.0);
+                stack[sp] = sdf_2d(sd_vesica(p, op.param0.x, op.param0.y));
                 sp++;
             }
             case OP_UNEVEN_CAPSULE: {
-                stack[sp] = SdfResult(sd_uneven_capsule(p, op.param0.x, op.param0.y, op.param0.z), 0.0);
+                stack[sp] = sdf_2d(sd_uneven_capsule(p, op.param0.x, op.param0.y, op.param0.z));
                 sp++;
             }
             case OP_ORIENTED_BOX: {
-                stack[sp] = SdfResult(sd_oriented_box(p, op.param0.xy, op.param0.zw, op.param1.x), 0.0);
+                stack[sp] = sdf_2d(sd_oriented_box(p, op.param0.xy, op.param0.zw, op.param1.x));
                 sp++;
             }
             case OP_HORSESHOE: {
-                stack[sp] = SdfResult(sd_horseshoe(p, op.param0.xy, op.param0.z, op.param1.xy), 0.0);
+                stack[sp] = sdf_2d(sd_horseshoe(p, op.param0.xy, op.param0.z, op.param1.xy));
                 sp++;
             }
             case OP_ROUNDED_X: {
-                stack[sp] = SdfResult(sd_rounded_x(p, op.param0.x, op.param0.y), 0.0);
+                stack[sp] = sdf_2d(sd_rounded_x(p, op.param0.x, op.param0.y));
                 sp++;
             }
             case OP_CROSS: {
-                stack[sp] = SdfResult(sd_cross(p, op.param0.xy, op.param0.z), 0.0);
+                stack[sp] = sdf_2d(sd_cross(p, op.param0.xy, op.param0.z));
                 sp++;
             }
             case OP_QUAD_BEZIER: {
-                stack[sp] = SdfResult(sd_quad_bezier(p, op.param0.xy, op.param0.zw, op.param1.xy), 0.0);
+                stack[sp] = sdf_2d(sd_quad_bezier(p, op.param0.xy, op.param0.zw, op.param1.xy));
                 sp++;
             }
             case OP_PARABOLA: {
-                stack[sp] = SdfResult(sd_parabola(p, op.param0.x), 0.0);
+                stack[sp] = sdf_2d(sd_parabola(p, op.param0.x));
                 sp++;
             }
             case OP_COOL_S: {
-                stack[sp] = SdfResult(sd_cool_s(p), 0.0);
+                stack[sp] = sdf_2d(sd_cool_s(p));
                 sp++;
             }
             case OP_BLOBBY_CROSS: {
-                stack[sp] = SdfResult(sd_blobby_cross(p, op.param0.x), 0.0);
+                stack[sp] = sdf_2d(sd_blobby_cross(p, op.param0.x));
                 sp++;
             }
             case OP_UNION: {
@@ -931,7 +990,7 @@ fn evaluate_sdf(p: vec2<f32>, shape: ShapeInstance) -> SdfResult {
                 let dist_along = shifted_u - nearest;
                 let dd = abs(vec2(dist_along, a.dist)) - vec2(half_dash, half_thick);
                 let d = length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
-                stack[sp] = SdfResult(d, a.u);
+                stack[sp] = SdfResult(d, a.u, d);
                 sp++;
             }
             case OP_ARROW: {
@@ -965,7 +1024,7 @@ fn evaluate_sdf(p: vec2<f32>, shape: ShapeInstance) -> SdfResult {
                 let dist_along_a = shifted_u_a - nearest_a;
                 let dd_a = abs(vec2(dist_along_a, a.dist)) - vec2(half_seg, half_thick_a);
                 let d_a = length(max(dd_a, vec2(0.0))) + min(max(dd_a.x, dd_a.y), 0.0);
-                stack[sp] = SdfResult(d_a, a.u);
+                stack[sp] = SdfResult(d_a, a.u, d_a);
                 sp++;
             }
             default: {}
@@ -975,7 +1034,7 @@ fn evaluate_sdf(p: vec2<f32>, shape: ShapeInstance) -> SdfResult {
     if sp > 0u {
         return stack[sp - 1u];
     }
-    return SdfResult(1e10, 0.0);
+    return SdfResult(1e10, 0.0, 1e10);
 }
 
 // ============================================================================
@@ -1024,18 +1083,39 @@ fn render_layer(sdf: SdfResult, layer: SdfLayer) -> vec4<f32> {
     }
 
     var color = layer.color;
+    var dist_gradient = false;
 
     if (layer.flags & LAYER_FLAG_GRADIENT) != 0u {
         var t: f32;
         if (layer.flags & LAYER_FLAG_GRADIENT_U) != 0u {
             t = clamp(sdf.u * layer.gradient_angle, 0.0, 1.0);
         } else {
-            t = 0.5;
+            // Distance-based gradient: RGBA controlled entirely by gradient colors
+            t = 1.0 - alpha;
+            dist_gradient = true;
         }
         color = mix(layer.color, layer.gradient_color, t);
     }
 
-    return vec4(color.rgb, color.a * alpha);
+    var pa: f32;
+    if dist_gradient {
+        pa = color.a; // gradient controls alpha directly
+    } else {
+        pa = color.a * alpha; // shape/blur controls alpha
+    }
+    var result = vec4(color.rgb * pa, pa);
+
+    // Outline: thin line at the boundary of the layer shape
+    if layer.outline_thickness > 0.0 {
+        let outline_d = abs(d) - layer.outline_thickness;
+        let aa_o = fwidth(outline_d) * 0.75;
+        let outline_alpha = 1.0 - smoothstep(-aa_o, aa_o, outline_d);
+        let oc = layer.outline_color;
+        // Composite outline over fill (outline is drawn on top)
+        result = result * (1.0 - oc.a * outline_alpha) + vec4(oc.rgb * oc.a * outline_alpha, oc.a * outline_alpha);
+    }
+
+    return result;
 }
 
 // ============================================================================
@@ -1090,7 +1170,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let end = shape.layers_offset + shape.layers_count;
     for (var i: u32 = shape.layers_offset; i < end; i++) {
         let layer = layers[i];
-        let layer_color = render_layer(sdf, layer);
+        // Re-evaluate SDF at offset position for shadow layers
+        var layer_sdf = sdf;
+        if layer.offset.x != 0.0 || layer.offset.y != 0.0 {
+            layer_sdf = evaluate_sdf(in.world_pos - layer.offset, shape);
+        }
+        let layer_color = render_layer(layer_sdf, layer);
         color = color * (1.0 - layer_color.a) + layer_color;
     }
 

@@ -666,6 +666,56 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
             layers: default_layers,
             extent: 100.0,
         },
+        // ================================================================
+        // Edge Pattern Editor (Layer-level)
+        // ================================================================
+        ShapeEntry {
+            name: "Edge Editor",
+            description: "Interactive multi-layer edge with pattern, border, and shadow controls.",
+            slug: "edge_editor",
+            build: edge_bezier,
+            layers: || edge_layers(Pattern::solid(3.0)),
+            extent: 140.0,
+        },
+    ]
+}
+
+fn edge_bezier(_t: f32) -> Sdf {
+    let from = [-120.0, -40.0];
+    let to = [120.0, 40.0];
+    let offset = 80.0;
+    Sdf::bezier(from, [from[0] + offset, from[1]], [to[0] - offset, to[1]], to)
+}
+
+/// Build the multi-layer stack for an edge with the given stroke pattern.
+///
+/// Layer structure (bottom to top):
+///   1. Shadow  - soft dark glow behind the entire edge
+///   2. Border  - solid ring around the stroke, with comic-style outline
+///   3. Stroke  - the visible patterned line, with outline following the pattern
+fn edge_layers(pattern: Pattern) -> Vec<Layer> {
+    // Stroke is 3.0 wide by default (half = 1.5)
+    let stroke_half = 1.5;
+    let gap = 1.0;
+    let border_thickness = 1.5;
+    let border_center = stroke_half + gap + border_thickness * 0.5;
+    let outline = Color::from_rgba(0.0, 0.0, 0.0, 0.8);
+
+    vec![
+        // Shadow: extends past the border, fades to transparent
+        Layer::solid(Color::from_rgba(0.0, 0.0, 0.0, 0.15))
+            .expand(border_center + border_thickness * 0.5 + 6.0)
+            .blur(8.0),
+        // Border: solid ring outside the stroke, with outline around it
+        Layer::stroke(
+            Color::from_rgb(0.12, 0.12, 0.2),
+            Pattern::solid(border_thickness),
+        )
+        .expand(border_center)
+        .outline(0.8, outline),
+        // Stroke: patterned line, outline follows the pattern shape
+        Layer::stroke(Color::from_rgb(0.35, 0.8, 1.0), pattern)
+            .outline(0.6, outline),
     ]
 }
 

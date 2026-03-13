@@ -26,9 +26,12 @@
 mod shapes;
 mod widget;
 
-use iced::widget::{button, column, container, row, scrollable, text};
+use std::collections::HashSet;
+
+use iced::widget::{button, column, container, pick_list, row, scrollable, slider, text, toggler};
 use iced::window;
-use iced::{Color, Element, Fill, Subscription, Theme};
+use iced::{Center, Color, Element, Fill, Subscription, Theme};
+use iced_sdf::{Layer, Pattern};
 use web_time::Instant;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -133,10 +136,398 @@ pub fn run_demo_in(target: &str, shape: &str) {
     let _ = main_with_target(target.into(), Some(shape.into()), true);
 }
 
+// ---------------------------------------------------------------------------
+// Edge editor types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PatternKind {
+    Solid,
+    Dashed,
+    DashCapped,
+    Arrowed,
+    Dotted,
+    DashDotted,
+}
+
+impl PatternKind {
+    const ALL: &'static [PatternKind] = &[
+        Self::Solid,
+        Self::Dashed,
+        Self::DashCapped,
+        Self::Arrowed,
+        Self::Dotted,
+        Self::DashDotted,
+    ];
+
+    fn from_slug(slug: &str) -> Option<Self> {
+        match slug {
+            "edge_editor" => Some(Self::Solid),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for PatternKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Solid => write!(f, "Solid"),
+            Self::Dashed => write!(f, "Dashed"),
+            Self::DashCapped => write!(f, "DashCapped"),
+            Self::Arrowed => write!(f, "Arrowed"),
+            Self::Dotted => write!(f, "Dotted"),
+            Self::DashDotted => write!(f, "DashDotted"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum FloatParam {
+    StrokeThickness,
+    StrokeOutlineThickness,
+    DashLength,
+    DashGap,
+    DashAngle,
+    ArrowSegment,
+    ArrowGap,
+    ArrowAngle,
+    DotGap,
+    DotRadius,
+    DdDash,
+    DdGap,
+    DdDotRadius,
+    BorderGap,
+    BorderThickness,
+    BorderOutlineThickness,
+    ShadowOffsetX,
+    ShadowOffsetY,
+    ShadowDistance,
+    FlowSpeed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ColorParam {
+    StrokeColor,
+    StrokeColorEnd,
+    StrokeOutlineColor,
+    BorderColor,
+    BorderColorEnd,
+    BorderBackground,
+    BorderBackgroundEnd,
+    BorderOutlineColor,
+    ShadowColor,
+    ShadowColorEnd,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LayerKind {
+    Shadow,
+    Border,
+    Stroke,
+}
+
+struct EdgeEditorState {
+    // Which color editors are expanded (collapsed by default)
+    expanded_colors: HashSet<ColorParam>,
+
+    // Layer visibility
+    shadow_visible: bool,
+    border_visible: bool,
+    stroke_visible: bool,
+
+    // Pattern selection
+    pattern_kind: PatternKind,
+
+    // Stroke
+    stroke_thickness: f32,
+    stroke_color: [f32; 4],
+    stroke_outline_thickness: f32,
+    stroke_outline_color: [f32; 4],
+
+    // Dashed params (also used by DashCapped)
+    dash_length: f32,
+    dash_gap: f32,
+    dash_angle: f32, // degrees
+
+    // Arrowed params
+    arrow_segment: f32,
+    arrow_gap: f32,
+    arrow_angle: f32, // degrees
+
+    // Dotted params
+    dot_gap: f32,
+    dot_radius: f32,
+
+    // DashDotted params
+    dd_dash: f32,
+    dd_gap: f32,
+    dd_dot_radius: f32,
+
+    stroke_color_end: [f32; 4],
+
+    // Border
+    border_gap: f32,
+    border_thickness: f32,
+    border_color: [f32; 4],
+    border_background: [f32; 4],
+    border_background_end: [f32; 4],
+    border_outline_thickness: f32,
+    border_outline_color: [f32; 4],
+
+    border_color_end: [f32; 4],
+
+    // Shadow
+    shadow_offset_x: f32,
+    shadow_offset_y: f32,
+    shadow_distance: f32,
+    shadow_color: [f32; 4],
+    shadow_color_end: [f32; 4],
+
+    // Flow
+    flow_speed: f32,
+}
+
+impl EdgeEditorState {
+    fn new(kind: PatternKind) -> Self {
+        Self {
+            expanded_colors: HashSet::new(),
+
+            shadow_visible: true,
+            border_visible: true,
+            stroke_visible: true,
+
+            pattern_kind: kind,
+
+            stroke_thickness: 6.0,
+            stroke_color: [0.2, 0.85, 1.0, 1.0],
+            stroke_outline_thickness: 1.2,
+            stroke_outline_color: [0.05, 0.05, 0.15, 1.0],
+
+            stroke_color_end: [0.6, 0.2, 1.0, 1.0],
+
+            dash_length: 14.0,
+            dash_gap: 8.0,
+            dash_angle: 0.0,
+
+            arrow_segment: 10.0,
+            arrow_gap: 8.0,
+            arrow_angle: 45.0,
+
+            dot_gap: 6.0,
+            dot_radius: 4.0,
+
+            dd_dash: 14.0,
+            dd_gap: 6.0,
+            dd_dot_radius: 3.0,
+
+            border_gap: 2.0,
+            border_thickness: 3.0,
+            border_color: [0.95, 0.75, 0.2, 1.0],
+            border_background: [0.08, 0.06, 0.18, 0.5],
+            border_background_end: [0.18, 0.06, 0.08, 0.5],
+            border_outline_thickness: 0.8,
+            border_outline_color: [0.05, 0.05, 0.15, 1.0],
+
+            border_color_end: [1.0, 0.3, 0.2, 1.0],
+
+            shadow_offset_x: 3.0,
+            shadow_offset_y: 3.0,
+            shadow_distance: 10.0,
+            shadow_color: [0.0, 0.0, 0.1, 0.35],
+            shadow_color_end: [0.0, 0.0, 0.1, 0.0],
+
+            flow_speed: 0.0,
+        }
+    }
+
+    fn build_pattern(&self) -> Pattern {
+        let deg2rad = std::f32::consts::PI / 180.0;
+        let p = match self.pattern_kind {
+            PatternKind::Solid => Pattern::solid(self.stroke_thickness),
+            PatternKind::Dashed => {
+                Pattern::dashed_angle(self.stroke_thickness, self.dash_length, self.dash_gap, self.dash_angle * deg2rad)
+            }
+            PatternKind::DashCapped => {
+                Pattern::dash_capped_angle(self.stroke_thickness, self.dash_length, self.dash_gap, self.dash_angle * deg2rad)
+            }
+            PatternKind::Arrowed => {
+                Pattern::arrowed(self.stroke_thickness, self.arrow_segment, self.arrow_gap, self.arrow_angle * deg2rad)
+            }
+            PatternKind::Dotted => Pattern::dotted(self.dot_gap + self.dot_radius * 2.0, self.dot_radius),
+            PatternKind::DashDotted => {
+                Pattern::dash_dotted(self.stroke_thickness, self.dd_dash, self.dd_gap, self.dd_dot_radius)
+            }
+        };
+        if self.flow_speed.abs() > 0.01 {
+            p.flow(self.flow_speed)
+        } else {
+            p
+        }
+    }
+
+    fn build_layers(&self) -> Vec<Layer> {
+        let mut layers = Vec::with_capacity(4);
+
+        // Approximate arc-length of the fixed bezier for gradient normalization.
+        // Control points: [-120,-40], [-40,-40], [40,40], [120,40]
+        let arc_scale = 1.0 / approx_bezier_arc_length();
+
+        let stroke_half = match self.pattern_kind {
+            PatternKind::Dotted => self.dot_radius,
+            PatternKind::DashDotted => (self.stroke_thickness * 0.5).max(self.dd_dot_radius),
+            _ => self.stroke_thickness * 0.5,
+        };
+        let border_center = stroke_half + self.border_gap + self.border_thickness * 0.5;
+        let border_outer = border_center + self.border_thickness * 0.5;
+
+        let has_border = self.border_visible && self.border_thickness > 0.01;
+
+        // Shadow - encompasses stroke + border, distance-based gradient
+        if self.shadow_visible
+            && self.shadow_distance > 0.01
+            && (self.shadow_color[3] > 0.001 || self.shadow_color_end[3] > 0.001)
+        {
+            layers.push(
+                Layer::gradient(
+                    color_from(self.shadow_color),
+                    color_from(self.shadow_color_end),
+                    0.0, // angle unused, distance-based via t = 1.0 - alpha
+                )
+                .expand(border_outer + self.shadow_distance)
+                .blur(self.shadow_distance)
+                .offset(self.shadow_offset_x, self.shadow_offset_y),
+            );
+        }
+
+        // Border background (gap fill) - renders even when border_thickness=0
+        if self.border_visible && (self.border_background[3] > 0.001 || self.border_background_end[3] > 0.001) {
+            let mut bg = Layer::solid(color_from(self.border_background))
+                .expand(border_outer);
+            bg.gradient_color = Some(color_from(self.border_background_end));
+            bg.gradient_along_u = true;
+            bg.gradient_angle = arc_scale;
+            layers.push(bg);
+        }
+
+        // Border stroke - only when thickness > 0
+        if has_border {
+            let mut border = Layer::stroke(
+                color_from(self.border_color),
+                Pattern::solid(self.border_thickness),
+            )
+            .expand(border_center);
+            border.gradient_color = Some(color_from(self.border_color_end));
+            border.gradient_along_u = true;
+            border.gradient_angle = arc_scale;
+            if self.border_outline_thickness > 0.01 {
+                border = border.outline(self.border_outline_thickness, color_from(self.border_outline_color));
+            }
+            layers.push(border);
+        }
+
+        // Stroke
+        if self.stroke_visible {
+            let mut stroke = Layer::stroke(color_from(self.stroke_color), self.build_pattern());
+            stroke.gradient_color = Some(color_from(self.stroke_color_end));
+            stroke.gradient_along_u = true;
+            stroke.gradient_angle = arc_scale;
+            if self.stroke_outline_thickness > 0.01 {
+                stroke = stroke.outline(self.stroke_outline_thickness, color_from(self.stroke_outline_color));
+            }
+            layers.push(stroke);
+        }
+
+        layers
+    }
+
+    fn set_float(&mut self, param: FloatParam, value: f32) {
+        match param {
+            FloatParam::StrokeThickness => self.stroke_thickness = value,
+            FloatParam::StrokeOutlineThickness => self.stroke_outline_thickness = value,
+            FloatParam::DashLength => self.dash_length = value,
+            FloatParam::DashGap => self.dash_gap = value,
+            FloatParam::DashAngle => self.dash_angle = value,
+            FloatParam::ArrowSegment => self.arrow_segment = value,
+            FloatParam::ArrowGap => self.arrow_gap = value,
+            FloatParam::ArrowAngle => self.arrow_angle = value,
+            FloatParam::DotGap => self.dot_gap = value,
+            FloatParam::DotRadius => self.dot_radius = value,
+            FloatParam::DdDash => self.dd_dash = value,
+            FloatParam::DdGap => self.dd_gap = value,
+            FloatParam::DdDotRadius => self.dd_dot_radius = value,
+            FloatParam::BorderGap => self.border_gap = value,
+            FloatParam::BorderThickness => self.border_thickness = value,
+            FloatParam::BorderOutlineThickness => self.border_outline_thickness = value,
+            FloatParam::ShadowOffsetX => self.shadow_offset_x = value,
+            FloatParam::ShadowOffsetY => self.shadow_offset_y = value,
+            FloatParam::ShadowDistance => self.shadow_distance = value,
+            FloatParam::FlowSpeed => self.flow_speed = value,
+        }
+    }
+
+    fn set_color_channel(&mut self, param: ColorParam, channel: usize, value: f32) {
+        let c = match param {
+            ColorParam::StrokeColor => &mut self.stroke_color,
+            ColorParam::StrokeColorEnd => &mut self.stroke_color_end,
+            ColorParam::StrokeOutlineColor => &mut self.stroke_outline_color,
+            ColorParam::BorderColor => &mut self.border_color,
+            ColorParam::BorderColorEnd => &mut self.border_color_end,
+            ColorParam::BorderBackground => &mut self.border_background,
+            ColorParam::BorderBackgroundEnd => &mut self.border_background_end,
+            ColorParam::BorderOutlineColor => &mut self.border_outline_color,
+            ColorParam::ShadowColor => &mut self.shadow_color,
+            ColorParam::ShadowColorEnd => &mut self.shadow_color_end,
+        };
+        if channel < 4 {
+            c[channel] = value;
+        }
+    }
+}
+
+fn color_from(rgba: [f32; 4]) -> Color {
+    Color::from_rgba(rgba[0], rgba[1], rgba[2], rgba[3])
+}
+
+/// Approximate arc-length of the fixed edge bezier curve via subdivision.
+/// Control points: [-120,-40], [-40,-40], [40,40], [120,40].
+fn approx_bezier_arc_length() -> f32 {
+    let p0 = (-120.0_f32, -40.0_f32);
+    let p1 = (-40.0, -40.0);
+    let p2 = (40.0, 40.0);
+    let p3 = (120.0, 40.0);
+    let steps = 64;
+    let mut length = 0.0_f32;
+    let mut prev = p0;
+    for i in 1..=steps {
+        let t = i as f32 / steps as f32;
+        let it = 1.0 - t;
+        let x = it * it * it * p0.0 + 3.0 * it * it * t * p1.0 + 3.0 * it * t * t * p2.0 + t * t * t * p3.0;
+        let y = it * it * it * p0.1 + 3.0 * it * it * t * p1.1 + 3.0 * it * t * t * p2.1 + t * t * t * p3.1;
+        let dx = x - prev.0;
+        let dy = y - prev.1;
+        length += (dx * dx + dy * dy).sqrt();
+        prev = (x, y);
+    }
+    length
+}
+
+fn editor_for_selected(selected: usize) -> Option<EdgeEditorState> {
+    let entries = shapes::all_shapes();
+    entries
+        .get(selected)
+        .and_then(|e| PatternKind::from_slug(e.slug))
+        .map(EdgeEditorState::new)
+}
+
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
+
 struct App {
     selected: usize,
     embed: bool,
     start_time: Instant,
+    editor: Option<EdgeEditorState>,
     #[cfg(not(target_arch = "wasm32"))]
     screenshot: ScreenshotHelper,
 }
@@ -145,6 +536,11 @@ struct App {
 enum Message {
     Select(usize),
     Tick,
+    SetPatternKind(PatternKind),
+    SetFloat(FloatParam, f32),
+    SetColorChannel(ColorParam, usize, f32),
+    ToggleLayer(LayerKind, bool),
+    ToggleColorEditor(ColorParam),
     #[cfg(not(target_arch = "wasm32"))]
     Screenshot(demo_common::ScreenshotMessage),
 }
@@ -158,11 +554,13 @@ impl From<ScreenshotMessage> for Message {
 
 impl App {
     fn new(selected: usize, embed: bool) -> (Self, iced::Task<Message>) {
+        let editor = editor_for_selected(selected);
         (
             Self {
                 selected,
                 embed,
                 start_time: Instant::now(),
+                editor,
                 #[cfg(not(target_arch = "wasm32"))]
                 screenshot: ScreenshotHelper::from_args(),
             },
@@ -184,7 +582,41 @@ impl App {
 
     fn update(&mut self, message: Message) -> iced::Task<Message> {
         match message {
-            Message::Select(idx) => self.selected = idx,
+            Message::Select(idx) => {
+                self.selected = idx;
+                self.editor = editor_for_selected(idx);
+            }
+            Message::SetPatternKind(kind) => {
+                if let Some(e) = &mut self.editor {
+                    e.pattern_kind = kind;
+                }
+            }
+            Message::SetFloat(param, value) => {
+                if let Some(e) = &mut self.editor {
+                    e.set_float(param, value);
+                }
+            }
+            Message::SetColorChannel(param, ch, value) => {
+                if let Some(e) = &mut self.editor {
+                    e.set_color_channel(param, ch, value);
+                }
+            }
+            Message::ToggleLayer(kind, visible) => {
+                if let Some(e) = &mut self.editor {
+                    match kind {
+                        LayerKind::Shadow => e.shadow_visible = visible,
+                        LayerKind::Border => e.border_visible = visible,
+                        LayerKind::Stroke => e.stroke_visible = visible,
+                    }
+                }
+            }
+            Message::ToggleColorEditor(param) => {
+                if let Some(e) = &mut self.editor
+                    && !e.expanded_colors.remove(&param)
+                {
+                    e.expanded_colors.insert(param);
+                }
+            }
             Message::Tick => {}
             #[cfg(not(target_arch = "wasm32"))]
             Message::Screenshot(msg) => return self.screenshot.update(msg),
@@ -203,11 +635,8 @@ impl App {
 
         // Embed mode: only the SDF canvas, no sidebar or text
         if self.embed {
-            let sdf_view = widget::sdf_canvas(entry, elapsed);
-            return container(sdf_view)
-                .width(Fill)
-                .height(Fill)
-                .into();
+            let sdf_view = widget::sdf_canvas(entry, elapsed, None);
+            return container(sdf_view).width(Fill).height(Fill).into();
         }
 
         // Sidebar with shape list
@@ -241,20 +670,241 @@ impl App {
                 })
         };
 
-        // Main canvas area
+        // Main content area
         let canvas = {
             let title = text(entry.name).size(20);
             let description = text(entry.description).size(13);
 
-            let sdf_view = widget::sdf_canvas(entry, elapsed);
+            let layer_override = self.editor.as_ref().map(|e| e.build_layers());
+            let sdf_view = widget::sdf_canvas(entry, elapsed, layer_override);
 
-            column![title, description, sdf_view]
+            let mut content = column![title, description]
                 .spacing(8)
                 .padding(16)
                 .width(Fill)
-                .height(Fill)
+                .height(Fill);
+
+            if let Some(editor) = &self.editor {
+                content = content.push(edge_editor_ui(editor));
+            }
+
+            content.push(sdf_view)
         };
 
         row![sidebar, canvas].into()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Edge editor UI (three-column layout)
+// ---------------------------------------------------------------------------
+
+fn edge_editor_ui(editor: &EdgeEditorState) -> Element<'static, Message> {
+    let col_layers = layers_column(editor);
+    let col_stroke = stroke_column(editor);
+    let col_common = common_column(editor);
+
+    row![
+        scrollable(col_layers).height(220),
+        scrollable(col_stroke).height(220),
+        scrollable(col_common).height(220),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn layers_column(editor: &EdgeEditorState) -> Element<'static, Message> {
+    column![
+        section_header("Layers"),
+        toggler(editor.shadow_visible)
+            .label("Shadow")
+            .on_toggle(|v| Message::ToggleLayer(LayerKind::Shadow, v))
+            .size(16)
+            .text_size(12),
+        toggler(editor.border_visible)
+            .label("Border")
+            .on_toggle(|v| Message::ToggleLayer(LayerKind::Border, v))
+            .size(16)
+            .text_size(12),
+        toggler(editor.stroke_visible)
+            .label("Stroke")
+            .on_toggle(|v| Message::ToggleLayer(LayerKind::Stroke, v))
+            .size(16)
+            .text_size(12),
+    ]
+    .spacing(4)
+    .width(130)
+    .into()
+}
+
+fn stroke_column(editor: &EdgeEditorState) -> Element<'static, Message> {
+    let mut col = column![section_header("Stroke")].spacing(3);
+
+    // Pattern picker
+    col = col.push(
+        row![
+            text("Pattern").size(12).width(70),
+            pick_list(
+                PatternKind::ALL,
+                Some(editor.pattern_kind),
+                Message::SetPatternKind,
+            )
+            .text_size(12),
+        ]
+        .spacing(4)
+        .align_y(Center),
+    );
+
+    // Stroke thickness (not for Dotted - uses dot radius instead)
+    if editor.pattern_kind != PatternKind::Dotted {
+        col = col.push(float_slider("Thickness", FloatParam::StrokeThickness, 0.1, 20.0, 0.1, editor.stroke_thickness));
+    }
+
+    // Pattern-specific params
+    match editor.pattern_kind {
+        PatternKind::Solid => {}
+        PatternKind::Dashed | PatternKind::DashCapped => {
+            col = col
+                .push(float_slider("Dash", FloatParam::DashLength, 0.1, 50.0, 0.1, editor.dash_length))
+                .push(float_slider("Gap", FloatParam::DashGap, 0.1, 50.0, 0.1, editor.dash_gap))
+                .push(float_slider("Angle", FloatParam::DashAngle, -90.0, 90.0, 1.0, editor.dash_angle));
+        }
+        PatternKind::Arrowed => {
+            col = col
+                .push(float_slider("Segment", FloatParam::ArrowSegment, 0.1, 50.0, 0.1, editor.arrow_segment))
+                .push(float_slider("Gap", FloatParam::ArrowGap, 0.1, 50.0, 0.1, editor.arrow_gap))
+                .push(float_slider("Angle", FloatParam::ArrowAngle, -90.0, 90.0, 1.0, editor.arrow_angle));
+        }
+        PatternKind::Dotted => {
+            col = col
+                .push(float_slider("Gap", FloatParam::DotGap, 0.1, 50.0, 0.1, editor.dot_gap))
+                .push(float_slider("Radius", FloatParam::DotRadius, 0.1, 50.0, 0.1, editor.dot_radius));
+        }
+        PatternKind::DashDotted => {
+            col = col
+                .push(float_slider("Dash", FloatParam::DdDash, 0.1, 50.0, 0.1, editor.dd_dash))
+                .push(float_slider("Gap", FloatParam::DdGap, 0.1, 50.0, 0.1, editor.dd_gap))
+                .push(float_slider("Dot r", FloatParam::DdDotRadius, 0.1, 50.0, 0.1, editor.dd_dot_radius));
+        }
+    }
+
+    // Stroke color (start → end gradient along curve) + outline
+    let exp = &editor.expanded_colors;
+    col = col
+        .push(color_editor("Start", editor.stroke_color, ColorParam::StrokeColor, exp.contains(&ColorParam::StrokeColor)))
+        .push(color_editor("End", editor.stroke_color_end, ColorParam::StrokeColorEnd, exp.contains(&ColorParam::StrokeColorEnd)))
+        .push(float_slider("Outline", FloatParam::StrokeOutlineThickness, 0.0, 20.0, 0.1, editor.stroke_outline_thickness))
+        .push(color_editor("Outline", editor.stroke_outline_color, ColorParam::StrokeOutlineColor, exp.contains(&ColorParam::StrokeOutlineColor)))
+        .push(float_slider("Flow", FloatParam::FlowSpeed, 0.0, 100.0, 1.0, editor.flow_speed));
+
+    col.width(Fill).into()
+}
+
+fn common_column(editor: &EdgeEditorState) -> Element<'static, Message> {
+    let mut col = column![section_header("Border")].spacing(3);
+    let exp = &editor.expanded_colors;
+
+    col = col
+        .push(float_slider("Gap", FloatParam::BorderGap, 0.0, 20.0, 0.1, editor.border_gap))
+        .push(float_slider("Thickness", FloatParam::BorderThickness, 0.0, 20.0, 0.1, editor.border_thickness))
+        .push(color_editor("Start", editor.border_color, ColorParam::BorderColor, exp.contains(&ColorParam::BorderColor)))
+        .push(color_editor("End", editor.border_color_end, ColorParam::BorderColorEnd, exp.contains(&ColorParam::BorderColorEnd)))
+        .push(color_editor("Background start", editor.border_background, ColorParam::BorderBackground, exp.contains(&ColorParam::BorderBackground)))
+        .push(color_editor("Background end", editor.border_background_end, ColorParam::BorderBackgroundEnd, exp.contains(&ColorParam::BorderBackgroundEnd)))
+        .push(float_slider("Outline", FloatParam::BorderOutlineThickness, 0.0, 20.0, 0.1, editor.border_outline_thickness))
+        .push(color_editor("Outline", editor.border_outline_color, ColorParam::BorderOutlineColor, exp.contains(&ColorParam::BorderOutlineColor)));
+
+    col = col.push(section_header("Shadow"));
+    col = col
+        .push(float_slider("Offset X", FloatParam::ShadowOffsetX, -10.0, 10.0, 0.1, editor.shadow_offset_x))
+        .push(float_slider("Offset Y", FloatParam::ShadowOffsetY, -10.0, 10.0, 0.1, editor.shadow_offset_y))
+        .push(float_slider("Distance", FloatParam::ShadowDistance, 0.0, 50.0, 0.1, editor.shadow_distance))
+        .push(color_editor("Start", editor.shadow_color, ColorParam::ShadowColor, exp.contains(&ColorParam::ShadowColor)))
+        .push(color_editor("End", editor.shadow_color_end, ColorParam::ShadowColorEnd, exp.contains(&ColorParam::ShadowColorEnd)));
+
+    col.width(Fill).into()
+}
+
+// ---------------------------------------------------------------------------
+// UI helpers
+// ---------------------------------------------------------------------------
+
+fn section_header(title: &str) -> Element<'static, Message> {
+    text(title.to_string())
+        .size(14)
+        .color(Color::from_rgb(0.7, 0.7, 0.8))
+        .into()
+}
+
+fn float_slider(
+    label: &str,
+    param: FloatParam,
+    min: f32,
+    max: f32,
+    step: f32,
+    value: f32,
+) -> Element<'static, Message> {
+    let label = label.to_string();
+    let value_text = format!("{value:.1}");
+    row![
+        text(label).size(11).width(60),
+        slider(min..=max, value, move |v| Message::SetFloat(param, v)).step(step),
+        text(value_text).size(11).width(36),
+    ]
+    .spacing(4)
+    .align_y(Center)
+    .into()
+}
+
+fn color_editor(
+    label: &str,
+    rgba: [f32; 4],
+    param: ColorParam,
+    expanded: bool,
+) -> Element<'static, Message> {
+    let swatch = button(
+        container(text("").size(1))
+            .width(16)
+            .height(16)
+            .style(move |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(color_from(rgba))),
+                border: iced::Border {
+                    color: Color::from_rgb(0.5, 0.5, 0.5),
+                    width: 1.0,
+                    radius: 2.0.into(),
+                },
+                ..Default::default()
+            }),
+    )
+    .on_press(Message::ToggleColorEditor(param))
+    .padding(0)
+    .style(button::text);
+
+    let header = row![
+        text(label.to_string()).size(11).width(60),
+        swatch,
+    ]
+    .spacing(4)
+    .align_y(Center);
+
+    if !expanded {
+        return header.into();
+    }
+
+    let channel_labels = ["R", "G", "B", "A"];
+    let mut sliders = column![].spacing(1);
+    for (i, ch_label) in channel_labels.iter().enumerate() {
+        let ch = i;
+        let val = rgba[i];
+        sliders = sliders.push(
+            row![
+                text(ch_label.to_string()).size(9).width(12),
+                slider(0.0..=1.0_f32, val, move |v| Message::SetColorChannel(param, ch, v)).step(0.01),
+            ]
+            .spacing(2)
+            .align_y(Center),
+        );
+    }
+
+    column![header, sliders].spacing(2).into()
 }
