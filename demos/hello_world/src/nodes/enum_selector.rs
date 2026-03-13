@@ -1,6 +1,6 @@
 //! Enum Selector Input Nodes
 //!
-//! Pill-style selection for EdgeCurve, PinShape, PatternType, and BackgroundPattern enums.
+//! Pill-style selection for EdgeCurve, PinShape, and PatternType enums.
 //! Industrial Precision design: compact pills, clear selection state.
 
 use iced::{
@@ -10,7 +10,7 @@ use iced::{
 };
 use iced_nodegraph::{EdgeCurve, NodeContentStyle, PinShape, pin};
 
-use super::{PatternType, PatternTypeSelection, colors, node_title_bar, pins};
+use super::{PatternType, colors, node_title_bar, pins};
 
 /// Creates a pill button for enum selection
 fn pill_button<'a, T, Message>(
@@ -84,13 +84,10 @@ where
     let style = NodeContentStyle::input(theme);
     let accent = colors::PIN_ANY;
 
-    // Create pills directly for clean layout
     let on_change1 = on_change.clone();
     let on_change2 = on_change.clone();
-    let on_change3 = on_change.clone();
-    let on_change4 = on_change.clone();
 
-    let row1 = row![
+    let pills = row![
         pill_button(
             "Bezier",
             EdgeCurve::BezierCubic,
@@ -103,24 +100,6 @@ where
             EdgeCurve::Line,
             selected,
             on_change2(EdgeCurve::Line),
-            accent
-        ),
-    ]
-    .spacing(4);
-
-    let row2 = row![
-        pill_button(
-            "Step",
-            EdgeCurve::Orthogonal,
-            selected,
-            on_change3(EdgeCurve::Orthogonal),
-            accent
-        ),
-        pill_button(
-            "Smooth",
-            EdgeCurve::OrthogonalSmooth { radius: 15.0 },
-            selected,
-            on_change4(EdgeCurve::OrthogonalSmooth { radius: 15.0 }),
             accent
         ),
     ]
@@ -139,7 +118,7 @@ where
 
     column![
         node_title_bar("Edge Curve", style),
-        container(column![column![row1, row2].spacing(4), output_pin,].spacing(8))
+        container(column![pills, output_pin,].spacing(8))
             .padding([10, 12])
     ]
     .width(160.0)
@@ -317,110 +296,3 @@ where
     .into()
 }
 
-/// Creates a BackgroundPattern selector node with pill buttons
-pub fn background_pattern_selector_node<'a, Message>(
-    theme: &'a iced::Theme,
-    selected: PatternTypeSelection,
-    on_change: impl Fn(PatternTypeSelection) -> Message + Clone + 'a,
-) -> iced::Element<'a, Message>
-where
-    Message: Clone + 'a,
-{
-    let style = NodeContentStyle::input(theme);
-    let accent = colors::PIN_STRING; // Same color as pattern pin
-
-    // Create pills for background pattern types
-    let on_change1 = on_change.clone();
-    let on_change2 = on_change.clone();
-    let on_change3 = on_change.clone();
-    let on_change4 = on_change.clone();
-    let on_change5 = on_change.clone();
-    let on_change6 = on_change.clone();
-    let on_change7 = on_change.clone();
-
-    // First row: None, Grid
-    let pills_row1 = row![
-        pill_button(
-            "None",
-            PatternTypeSelection::None,
-            selected,
-            on_change1(PatternTypeSelection::None),
-            accent
-        ),
-        pill_button(
-            "Grid",
-            PatternTypeSelection::Grid,
-            selected,
-            on_change2(PatternTypeSelection::Grid),
-            accent
-        ),
-    ]
-    .spacing(4);
-
-    // Second row: Hex, Triangle
-    let pills_row2 = row![
-        pill_button(
-            "Hex",
-            PatternTypeSelection::Hex,
-            selected,
-            on_change3(PatternTypeSelection::Hex),
-            accent
-        ),
-        pill_button(
-            "Triangle",
-            PatternTypeSelection::Triangle,
-            selected,
-            on_change4(PatternTypeSelection::Triangle),
-            accent
-        ),
-    ]
-    .spacing(4);
-
-    // Third row: Dots, Lines
-    let pills_row3 = row![
-        pill_button(
-            "Dots",
-            PatternTypeSelection::Dots,
-            selected,
-            on_change5(PatternTypeSelection::Dots),
-            accent
-        ),
-        pill_button(
-            "Lines",
-            PatternTypeSelection::Lines,
-            selected,
-            on_change6(PatternTypeSelection::Lines),
-            accent
-        ),
-    ]
-    .spacing(4);
-
-    // Fourth row: Crosshatch
-    let pills_row4 = row![pill_button(
-        "Crosshatch",
-        PatternTypeSelection::Crosshatch,
-        selected,
-        on_change7(PatternTypeSelection::Crosshatch),
-        accent
-    ),]
-    .spacing(4);
-
-    let output_pin = container(pin!(
-        Right,
-        "value",
-        text("value").size(10),
-        Output,
-        pins::PatternTypeData,
-        colors::PIN_STRING
-    ))
-    .width(Length::Fill)
-    .align_x(Horizontal::Right);
-
-    column![
-        node_title_bar("Bg Pattern", style),
-        container(column![pills_row1, pills_row2, pills_row3, pills_row4, output_pin,].spacing(6))
-            .padding([10, 12])
-    ]
-    .width(180.0)
-    .into()
-}

@@ -3,12 +3,12 @@
 //! This module implements the Iced `Widget` trait for [`NodeGraph`], handling:
 //! - Layout computation for nodes and their content
 //! - Event processing (mouse, keyboard)
-//! - GPU-accelerated rendering via custom WGPU primitives
+//! - SDF-based rendering via iced_sdf primitives
 //!
 //! ## Rendering Layers
 //!
 //! The widget renders in multiple layers for correct z-ordering:
-//! 1. Background grid
+//! 1. Background (solid color)
 //! 2. Edges (behind nodes)
 //! 3. Node fills and shadows
 //! 4. Node content (Iced widgets)
@@ -24,8 +24,7 @@ use std::hash::Hasher;
 use web_time::Instant;
 
 use super::{
-    DragInfo, NodeGraph, NodeGraphMessage,
-    effects::{GridPrimitive, RenderContext},
+    DragInfo, NodeGraph, NodeGraphMessage, RenderContext,
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState},
 };
@@ -152,27 +151,18 @@ fn edge_screen_bounds(
     };
 
     // Compute total padding from style layers
-    let stroke_width = style
-        .stroke
-        .as_ref()
-        .map(|s| s.width)
-        .unwrap_or(2.0);
+    let stroke_width = style.pattern.thickness;
     let border_extend = style
         .border
         .as_ref()
         .map(|b| b.gap + b.width)
         .unwrap_or(0.0);
-    let outline_extend = style
-        .outline
-        .as_ref()
-        .map(|o| o.width)
-        .unwrap_or(0.0);
     let shadow_extend = style
         .shadow
         .as_ref()
-        .map(|s| s.blur + s.offset.0.abs().max(s.offset.1.abs()))
+        .map(|s| s.blur + s.expand)
         .unwrap_or(0.0);
-    let padding = stroke_width + border_extend + outline_extend + shadow_extend
+    let padding = stroke_width + border_extend + shadow_extend
         + 4.0 / ctx.camera_zoom;
 
     world_bbox_to_screen_bounds(
@@ -191,8 +181,6 @@ fn resolve_edge_color(color: iced::Color, pin_color: iced::Color) -> iced::Color
 }
 
 /// Build SDF layers from an EdgeStyle, resolving pin color inheritance.
-/// Build SDF layers from an EdgeStyle, resolving pin color inheritance.
-/// All patterns are applied at the layer level so shadow/border stay continuous.
 fn edge_sdf_layers(
     style: &crate::style::EdgeStyle,
     start_pin_color: iced::Color,
@@ -214,24 +202,22 @@ fn edge_sdf_layers(
         (PinDirection::Input, PinDirection::Output)
     );
 
-    // Shadow layer (behind everything) - always continuous around the curve
+    // Shadow layer (behind everything)
     if let Some(shadow) = &style.shadow
         && shadow.color.a > 0.0
     {
-        let stroke_width = style.stroke.as_ref().map(|s| s.width).unwrap_or(2.0);
         layers.push(
             Layer::solid(shadow.color)
-                .expand(stroke_width + shadow.blur)
+                .expand(shadow.expand)
                 .blur(shadow.blur),
         );
     }
 
-    // Border layer (behind stroke) - always continuous around the curve
+    // Border layer (behind stroke)
     if let Some(border) = &style.border
         && border.width > 0.0
     {
-        let stroke_width = style.stroke.as_ref().map(|s| s.width).unwrap_or(2.0);
-        let total_width = stroke_width + border.gap + border.width;
+        let total_width = style.pattern.thickness + border.gap + border.width;
         let border_start = resolve_edge_color(border.start_color, start_pin_color);
         let border_end = resolve_edge_color(border.end_color, end_pin_color);
         let (c0, c1) = if is_reversed {
@@ -239,66 +225,38 @@ fn edge_sdf_layers(
         } else {
             (border_start, border_end)
         };
-        layers.push(
-            Layer::gradient_u(c0, c1)
-                .gradient_scale(gradient_scale)
-                .with_pattern(Pattern::solid(total_width)),
-        );
+        let mut layer = Layer::gradient_u(c0, c1)
+            .gradient_scale(gradient_scale)
+            .with_pattern(Pattern::solid(total_width));
+        if let Some((w, c)) = border.outline {
+            layer = layer.outline(w, c);
+        }
+        layers.push(layer);
     }
 
-    // Stroke layer (front) - pattern applied here only
-    if let Some(stroke) = &style.stroke {
-        let stroke_start = resolve_edge_color(stroke.start_color, start_pin_color);
-        let stroke_end = resolve_edge_color(stroke.end_color, end_pin_color);
-        let (c0, c1) = if is_reversed {
-            (stroke_end, stroke_start)
-        } else {
-            (stroke_start, stroke_end)
-        };
+    // Stroke layer (front)
+    let stroke_start = resolve_edge_color(style.start_color, start_pin_color);
+    let stroke_end = resolve_edge_color(style.end_color, end_pin_color);
+    let (c0, c1) = if is_reversed {
+        (stroke_end, stroke_start)
+    } else {
+        (stroke_start, stroke_end)
+    };
 
-        let base_speed = style.motion_speed();
-        let flow_speed = if is_reversed { base_speed } else { -base_speed };
+    let base_speed = style.pattern.flow_speed;
+    let pattern = if is_reversed && base_speed.abs() > 0.001 {
+        let mut p = style.pattern;
+        p.flow_speed = -p.flow_speed;
+        p
+    } else {
+        style.pattern
+    };
 
-        let pattern = match &stroke.pattern {
-            crate::style::StrokePattern::Solid => Pattern::solid(stroke.width),
-            crate::style::StrokePattern::Dashed { dash, gap, .. } => {
-                if let crate::style::DashCap::Angled { angle_rad } = stroke.dash_cap {
-                    let a = if is_reversed { -angle_rad } else { angle_rad };
-                    Pattern::dashed_angle(stroke.width, *dash, *gap, a)
-                } else {
-                    Pattern::dashed(stroke.width, *dash, *gap)
-                }
-            }
-            crate::style::StrokePattern::Arrowed {
-                segment,
-                gap,
-                angle,
-                ..
-            } => {
-                let a = if is_reversed { -*angle } else { *angle };
-                Pattern::arrowed(stroke.width, *segment, *gap, a)
-            }
-            crate::style::StrokePattern::Dotted {
-                spacing, radius, ..
-            } => Pattern::dotted(*spacing, *radius),
-            crate::style::StrokePattern::DashDotted {
-                dash, gap, dot_radius, ..
-            } => Pattern::dash_dotted(stroke.width, *dash, *gap, *dot_radius),
-            crate::style::StrokePattern::Custom { .. } => Pattern::solid(stroke.width),
-        };
-
-        let pattern = if flow_speed.abs() > 0.001 {
-            pattern.flow(flow_speed)
-        } else {
-            pattern
-        };
-
-        layers.push(
-            Layer::gradient_u(c0, c1)
-                .gradient_scale(gradient_scale)
-                .with_pattern(pattern),
-        );
-    }
+    layers.push(
+        Layer::gradient_u(c0, c1)
+            .gradient_scale(gradient_scale)
+            .with_pattern(pattern),
+    );
 
     layers
 }
@@ -353,48 +311,18 @@ fn compute_pin_hash<P: PinId>(pin_id: &P) -> u64 {
 
 /// Resolves a NodeConfig to a complete NodeStyle using theme defaults.
 fn resolve_node_style(config: &NodeConfig, theme: &Theme) -> NodeStyle {
-    use crate::style::NodeBorderStyle;
-
     let base = NodeStyle::from_theme(theme);
-
-    // Resolve border: merge config overrides with base
-    let border = if config.border_color.is_some() || config.border_width.is_some() {
-        // Config has border overrides
-        let base_border = base.border.unwrap_or_default();
-        Some(NodeBorderStyle {
-            width: config.border_width.unwrap_or(base_border.width),
-            start_color: config.border_color.unwrap_or(base_border.start_color),
-            end_color: config.border_color.unwrap_or(base_border.end_color),
-            ..base_border
-        })
-    } else {
-        base.border
-    };
 
     NodeStyle {
         fill_color: config.fill_color.unwrap_or(base.fill_color),
-        border,
         corner_radius: config.corner_radius.unwrap_or(base.corner_radius),
         opacity: config.opacity.unwrap_or(base.opacity),
-        shadow: config
-            .shadow
-            .as_ref()
-            .filter(|sc| sc.enabled.unwrap_or(true)) // Only if enabled (default true)
-            .map(|sc| crate::style::ShadowStyle {
-                offset: sc.offset.unwrap_or((4.0, 4.0)),
-                blur_radius: sc.blur_radius.unwrap_or(8.0),
-                color: sc
-                    .color
-                    .unwrap_or(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3)),
-            })
-            .or_else(|| {
-                // Fall back to base.shadow only if config.shadow is None
-                if config.shadow.is_none() {
-                    base.shadow
-                } else {
-                    None // config.shadow exists but enabled=false
-                }
-            }),
+        border: config.border.or(base.border),
+        shadow: if let Some(ref sc) = config.shadow {
+            sc.resolve()
+        } else {
+            base.shadow
+        },
     }
 }
 
@@ -529,15 +457,17 @@ where
         );
 
         // ========================================
-        // Layer 1: Grid (behind everything)
+        // Layer 1: Background (solid color)
         // ========================================
         renderer.with_layer(layout.bounds(), |renderer| {
-            renderer.draw_primitive(
-                layout.bounds(),
-                GridPrimitive {
-                    context: render_context,
-                    background_style: resolved_graph.background.clone(),
+            renderer.fill_quad(
+                iced_widget::core::renderer::Quad {
+                    bounds: layout.bounds(),
+                    border: iced::Border::default(),
+                    shadow: iced::Shadow::default(),
+                    snap: true,
                 },
+                iced_widget::core::Background::Color(resolved_graph.background_color),
             );
         });
 
@@ -815,73 +745,15 @@ where
 
             let (shadow_offset, shadow_blur, shadow_color) = if let Some(shadow) = &resolved.shadow
             {
-                (shadow.offset, shadow.blur_radius, shadow.color)
+                (shadow.offset, shadow.blur, shadow.color)
             } else {
                 ((0.0, 0.0), 0.0, iced::Color::TRANSPARENT)
             };
 
-            // Extract border fields for node rendering
-            let (
-                border_width,
-                border_start_color,
-                _border_end_color,
-                border_pattern_type,
-                border_dash_length,
-                border_gap_length,
-                border_flow_speed,
-                inner_outline_width,
-                inner_outline_start_color,
-                _inner_outline_end_color,
-                outer_outline_width,
-                outer_outline_start_color,
-                _outer_outline_end_color,
-            ) = if let Some(b) = &resolved.border {
-                let pattern_type = match &b.pattern {
-                    crate::style::StrokePattern::Solid => 0u32,
-                    crate::style::StrokePattern::Dashed { .. } => 1u32,
-                    crate::style::StrokePattern::Dotted { .. } => 2u32,
-                    crate::style::StrokePattern::Arrowed { .. } => 3u32,
-                    crate::style::StrokePattern::DashDotted { .. } => 4u32,
-                    crate::style::StrokePattern::Custom { .. } => 5u32,
-                };
-                let (inner_w, inner_start, inner_end) = b.inner_outline.as_ref()
-                    .map(|o| (o.width, o.start_color, o.end_color))
-                    .unwrap_or((0.0, iced::Color::TRANSPARENT, iced::Color::TRANSPARENT));
-                let (outer_w, outer_start, outer_end) = b.outer_outline.as_ref()
-                    .map(|o| (o.width, o.start_color, o.end_color))
-                    .unwrap_or((0.0, iced::Color::TRANSPARENT, iced::Color::TRANSPARENT));
-                (
-                    b.width,
-                    b.start_color,
-                    b.end_color,
-                    pattern_type,
-                    b.dash_length,
-                    b.gap_length,
-                    b.flow_speed,
-                    inner_w,
-                    inner_start,
-                    inner_end,
-                    outer_w,
-                    outer_start,
-                    outer_end,
-                )
-            } else {
-                (
-                    0.0,
-                    iced::Color::TRANSPARENT,
-                    iced::Color::TRANSPARENT,
-                    0u32, // solid
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    iced::Color::TRANSPARENT,
-                    iced::Color::TRANSPARENT,
-                    0.0,
-                    iced::Color::TRANSPARENT,
-                    iced::Color::TRANSPARENT,
-                )
-            };
+            // Extract border thickness for clipping
+            let border_width = resolved.border.as_ref()
+                .map(|b| b.pattern.thickness)
+                .unwrap_or(0.0);
 
             let node_position: WorldPoint =
                 (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
@@ -980,64 +852,47 @@ where
             // Layer 3c: Node Foreground (border + pins)
             renderer.with_layer(layout.bounds(), |renderer| {
                 // Border
-                if border_width > 0.0 {
-                    let border_pad = border_width + 2.0 / cam_zoom;
-                    let bb = world_bbox_to_screen_bounds(
-                        node_position.x, node_position.y,
-                        node_position.x + node_size.width, node_position.y + node_size.height,
-                        border_pad, &render_context,
-                    );
+                if let Some(node_border) = &resolved.border {
+                    let bw = node_border.pattern.thickness;
+                    if bw > 0.0 {
+                        let border_pad = bw + 2.0 / cam_zoom;
+                        let bb = world_bbox_to_screen_bounds(
+                            node_position.x, node_position.y,
+                            node_position.x + node_size.width, node_position.y + node_size.height,
+                            border_pad, &render_context,
+                        );
 
-                    let border_pattern = match border_pattern_type {
-                        1 => Pattern::dashed(border_width, border_dash_length, border_gap_length),
-                        2 => Pattern::dotted(border_dash_length.max(border_width), border_width * 0.5),
-                        3 => Pattern::arrowed(border_width, border_dash_length, border_gap_length, std::f32::consts::FRAC_PI_4),
-                        _ => Pattern::solid(border_width),
-                    };
-                    let border_pattern = if border_flow_speed != 0.0 {
-                        border_pattern.flow(border_flow_speed)
-                    } else {
-                        border_pattern
-                    };
+                        let mut border_layers = Vec::new();
 
-                    let mut border_layers = Vec::new();
+                        // Outline (behind border)
+                        if let Some((ow, oc)) = node_border.outline
+                            && ow > 0.0 && oc.a > 0.0
+                        {
+                            border_layers.push(
+                                Layer::stroke(
+                                    color_with_opacity(oc, opacity),
+                                    Pattern::solid(bw + ow * 2.0),
+                                ),
+                            );
+                        }
 
-                    // Outer outline (behind border)
-                    if outer_outline_width > 0.0 && outer_outline_start_color.a > 0.0 {
+                        // Border stroke
                         border_layers.push(
                             Layer::stroke(
-                                color_with_opacity(outer_outline_start_color, opacity),
-                                Pattern::solid(border_width + outer_outline_width * 2.0),
+                                color_with_opacity(node_border.color, opacity),
+                                node_border.pattern,
                             ),
                         );
-                    }
 
-                    // Border stroke
-                    border_layers.push(
-                        Layer::stroke(
-                            color_with_opacity(border_start_color, opacity),
-                            border_pattern,
-                        ),
-                    );
-
-                    // Inner outline (on top of border)
-                    if inner_outline_width > 0.0 && inner_outline_start_color.a > 0.0 {
-                        border_layers.push(
-                            Layer::stroke(
-                                color_with_opacity(inner_outline_start_color, opacity),
-                                Pattern::solid(border_width - inner_outline_width * 2.0),
-                            ),
+                        renderer.draw_primitive(
+                            layout.bounds(),
+                            SdfPrimitive::new(Sdf::rounded_box(node_center, node_half_size, corner_radius).onion(bw * 0.5))
+                                .layers(border_layers)
+                                .screen_bounds(bb)
+                                .camera(cam_x, cam_y, cam_zoom)
+                                .time(render_context.time),
                         );
                     }
-
-                    renderer.draw_primitive(
-                        layout.bounds(),
-                        SdfPrimitive::new(Sdf::rounded_box(node_center, node_half_size, corner_radius).onion(border_width * 0.5))
-                            .layers(border_layers)
-                            .screen_bounds(bb)
-                            .camera(cam_x, cam_y, cam_zoom)
-                            .time(render_context.time),
-                    );
                 }
 
                 // Pins (all shapes positioned in world space, same camera as everything else)

@@ -191,6 +191,14 @@ impl Layer {
         }
     }
 
+    /// Whether this layer fills the shape interior (no pattern = solid fill).
+    ///
+    /// Fill layers render everywhere inside the shape boundary (dist <= 0),
+    /// so interior tiles must not be culled.
+    pub fn is_fill(&self) -> bool {
+        self.pattern.is_none() && !self.distance_field
+    }
+
     /// Maximum radius of visual effect beyond the shape boundary.
     ///
     /// Used for tile culling: a tile can be skipped if the SDF distance

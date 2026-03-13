@@ -255,6 +255,10 @@ impl Primitive for SdfPrimitive {
         let tile_count = if use_tiling {
             // Compute max effect radius from all layers
             let max_radius = self.layers.iter().map(|l| l.max_effect_radius()).fold(0.0f32, f32::max);
+            // Check if any layer fills the shape interior (no pattern = solid fill).
+            // Fill layers render everywhere inside the boundary, so interior tiles
+            // must never be culled.
+            let has_fill = self.layers.iter().any(|l| l.is_fill());
 
             let tile = effective_tile_size;
             let tile_half_diag = tile * std::f32::consts::FRAC_1_SQRT_2;
@@ -287,13 +291,14 @@ impl Primitive for SdfPrimitive {
                     // Convert tile half-diagonal to world space for comparison
                     let world_half_diag = tile_half_diag * inv_zoom;
 
-                    // Skip tile if guaranteed outside effect radius.
-                    // Uses abs(dist): tiles far outside (dist >> 0) AND tiles
-                    // far inside (dist << 0) are both safe to skip -- the inside
-                    // case handles stroke-only shapes where the interior is transparent,
-                    // and for filled shapes the interior tiles are rarely far enough
-                    // from the boundary to be culled anyway.
-                    if result.dist.abs() - world_half_diag > max_radius {
+                    // Culling strategy depends on whether we have fill layers:
+                    // - Outside tiles (dist > 0): always cull if beyond max_radius
+                    // - Inside tiles (dist < 0): only cull for stroke-only shapes
+                    //   (no fill). Fill layers render the entire interior, so
+                    //   interior tiles must be kept.
+                    let dist = result.dist;
+                    let cull_dist = if has_fill { dist } else { dist.abs() };
+                    if cull_dist - world_half_diag > max_radius {
                         continue;
                     }
 

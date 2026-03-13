@@ -41,7 +41,7 @@ impl ShadowConfigInputs {
 
         ShadowConfig {
             offset,
-            blur_radius: self.blur_radius.or(parent.blur_radius),
+            blur: self.blur_radius.or(parent.blur),
             color: self.color.or(parent.color),
             enabled: self.enabled.or(parent.enabled),
         }
@@ -151,7 +151,7 @@ where
         container(
             text(
                 result
-                    .blur_radius
+                    .blur
                     .map_or("--".to_string(), |v| format!("{:.0}", v))
             )
             .size(9)

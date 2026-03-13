@@ -56,14 +56,23 @@ impl NodeConfigInputs {
     pub fn build(&self) -> NodeConfig {
         let parent = self.config_in.clone().unwrap_or_default();
 
-        NodeConfig {
+        let mut config = NodeConfig {
             fill_color: self.fill_color.or(parent.fill_color),
-            border_color: self.border_color.or(parent.border_color),
-            border_width: self.border_width.or(parent.border_width),
             corner_radius: self.corner_radius.or(parent.corner_radius),
             opacity: self.opacity.or(parent.opacity),
+            border: parent.border,
             shadow: self.shadow.clone().or(parent.shadow),
+        };
+
+        // Apply border overrides using builder methods
+        if let Some(color) = self.border_color {
+            config = config.border_color(color);
         }
+        if let Some(width) = self.border_width {
+            config = config.border_width(width);
+        }
+
+        config
     }
 }
 
@@ -136,7 +145,8 @@ where
     .align_y(iced::Alignment::Center);
 
     // Border color row
-    let border_display: iced::Element<'a, Message> = if let Some(c) = result.border_color {
+    let border_color = result.border.as_ref().map(|b| b.color);
+    let border_display: iced::Element<'a, Message> = if let Some(c) = border_color {
         container(text(""))
             .width(20)
             .height(12)
@@ -169,6 +179,7 @@ where
     .align_y(iced::Alignment::Center);
 
     // Border width row
+    let border_width = result.border.as_ref().map(|b| b.pattern.thickness);
     let width_row = row![
         pin!(
             Left,
@@ -180,8 +191,7 @@ where
         ),
         container(
             text(
-                result
-                    .border_width
+                border_width
                     .map_or("--".to_string(), |v| format!("{:.1}", v))
             )
             .size(9)

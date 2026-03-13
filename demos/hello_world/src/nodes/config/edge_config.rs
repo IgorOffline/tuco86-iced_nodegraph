@@ -8,8 +8,7 @@ use iced::{
     widget::{column, container, row, text},
 };
 use iced_nodegraph::{
-    BorderConfig, DashCap, EdgeConfig, EdgeCurve, EdgeShadowConfig, NodeContentStyle, OutlineConfig,
-    StrokeConfig, StrokePattern, pin,
+    EdgeBorder, EdgeConfig, EdgeCurve, EdgeShadow, NodeContentStyle, Pattern, pin,
 };
 
 use crate::nodes::{colors, node_title_bar, pins, section_header_with_pins};
@@ -20,7 +19,6 @@ pub struct EdgeSections {
     pub stroke: bool,
     pub pattern: bool,
     pub border: bool,
-    pub outline: bool,
     pub shadow: bool,
 }
 
@@ -30,7 +28,6 @@ impl EdgeSections {
             stroke: true,
             pattern: true,
             border: true,
-            outline: true,
             shadow: true,
         }
     }
@@ -42,12 +39,10 @@ pub enum EdgeSection {
     Stroke,
     Pattern,
     Border,
-    Outline,
     Shadow,
 }
 
-/// Pattern type for simple selection (maps to StrokePattern)
-/// IDs: 0=Solid, 1=Dashed, 2=Arrowed, 3=Angled, 4=Dotted, 5=DashDotted
+/// Pattern type for simple selection (maps to iced_sdf::Pattern)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PatternType {
     #[default]
@@ -75,27 +70,18 @@ pub struct EdgeConfigInputs {
     pub pattern_type: Option<PatternType>,
     pub dash_length: Option<f32>,
     pub gap_length: Option<f32>,
-    pub pattern_angle: Option<f32>, // Angle in radians for Arrowed/Angled patterns
-    pub dot_radius: Option<f32>,    // Dot radius for Dotted pattern
+    pub pattern_angle: Option<f32>,
+    pub dot_radius: Option<f32>,
     /// Animation speed (0.0 = no animation, > 0.0 = animated)
     pub animation_speed: Option<f32>,
-    /// Border settings (colored band around stroke with gap)
+    /// Border settings
     pub border_width: Option<f32>,
     pub border_gap: Option<f32>,
     pub border_start_color: Option<Color>,
     pub border_end_color: Option<Color>,
-    /// Unified outline settings (comic book effect, wraps entire edge)
-    pub outline_width: Option<f32>,
-    pub outline_start_color: Option<Color>,
-    pub outline_end_color: Option<Color>,
-    /// Outline position toggles
-    pub outline_stroke: Option<bool>,       // Outline around stroke pattern (each dash, dot)
-    pub outline_border_inner: Option<bool>, // Outline at border inner edge
-    pub outline_border_outer: Option<bool>, // Outline at border outer edge
     /// Shadow settings
+    pub shadow_expand: Option<f32>,
     pub shadow_blur: Option<f32>,
-    pub shadow_offset_x: Option<f32>,
-    pub shadow_offset_y: Option<f32>,
     pub shadow_color: Option<Color>,
 }
 
@@ -103,175 +89,89 @@ impl EdgeConfigInputs {
     /// Builds the final EdgeConfig by merging with parent
     pub fn build(&self) -> EdgeConfig {
         let parent = self.config_in.clone().unwrap_or_default();
-        let parent_stroke = parent.stroke.clone().unwrap_or_default();
 
         // Build pattern from inputs
-        let pattern = self.build_pattern(&parent_stroke);
+        let pattern = self.build_pattern(&parent);
 
-        // Check if we have any stroke overrides
-        let has_stroke_overrides = self.start_color.is_some()
-            || self.end_color.is_some()
-            || self.thickness.is_some()
-            || self.pattern_type.is_some();
+        // Colors
+        let start_color = self.start_color.or(parent.start_color);
+        let end_color = self.end_color.or(parent.end_color);
 
-        // Set dash_cap to Angled for PatternType::Angled
-        let dash_cap = if self.pattern_type == Some(PatternType::Angled) {
-            let angle = self.pattern_angle.unwrap_or(std::f32::consts::FRAC_PI_4);
-            Some(DashCap::Angled { angle_rad: angle })
-        } else {
-            parent_stroke.dash_cap
-        };
-
-        let stroke_config = if has_stroke_overrides {
-            Some(StrokeConfig {
-                start_color: self.start_color.or(parent_stroke.start_color),
-                end_color: self.end_color.or(parent_stroke.end_color),
-                width: self.thickness.or(parent_stroke.width),
-                pattern,
-                cap: parent_stroke.cap,
-                dash_cap,
-            })
-        } else {
-            parent.stroke.clone()
-        };
-
-        // Build border config if any border settings provided (width > 0 enables border)
+        // Build border config
         let has_border_overrides = self.border_width.is_some()
             || self.border_gap.is_some()
             || self.border_start_color.is_some()
             || self.border_end_color.is_some();
 
-        let border_config = if has_border_overrides {
-            let parent_border = parent.border.clone().unwrap_or_default();
-            Some(BorderConfig {
-                width: self.border_width.or(parent_border.width),
-                gap: self.border_gap.or(parent_border.gap),
-                start_color: self.border_start_color.or(parent_border.start_color),
-                end_color: self.border_end_color.or(parent_border.end_color),
-                inner_outline: parent_border.inner_outline,
-                outer_outline: parent_border.outer_outline,
-                enabled: parent_border.enabled,
+        let border = if has_border_overrides {
+            let pb = parent.border.unwrap_or_default();
+            Some(EdgeBorder {
+                start_color: self.border_start_color.unwrap_or(pb.start_color),
+                end_color: self.border_end_color.unwrap_or(pb.end_color),
+                width: self.border_width.unwrap_or(pb.width),
+                gap: self.border_gap.unwrap_or(pb.gap),
+                outline: pb.outline,
             })
         } else {
-            parent.border.clone()
+            parent.border
         };
 
-        // Build shadow config if any shadow settings provided (blur > 0 enables shadow)
+        // Build shadow config
         let has_shadow_overrides = self.shadow_blur.is_some()
-            || self.shadow_offset_x.is_some()
-            || self.shadow_offset_y.is_some()
+            || self.shadow_expand.is_some()
             || self.shadow_color.is_some();
 
-        let shadow_config = if has_shadow_overrides {
-            let parent_shadow = parent.shadow.clone().unwrap_or_default();
-            Some(EdgeShadowConfig {
-                blur: self.shadow_blur.or(parent_shadow.blur),
-                color: self.shadow_color.or(parent_shadow.color),
-                offset_x: self.shadow_offset_x.or(parent_shadow.offset_x),
-                offset_y: self.shadow_offset_y.or(parent_shadow.offset_y),
-                enabled: parent_shadow.enabled,
+        let shadow = if has_shadow_overrides {
+            let ps = parent.shadow.unwrap_or_default();
+            Some(EdgeShadow {
+                color: self.shadow_color.unwrap_or(ps.color),
+                expand: self.shadow_expand.unwrap_or(ps.expand),
+                blur: self.shadow_blur.unwrap_or(ps.blur),
             })
         } else {
-            parent.shadow.clone()
-        };
-
-        // Build unified outline config if any outline settings provided (width > 0 enables outline)
-        let has_outline_overrides = self.outline_width.is_some()
-            || self.outline_start_color.is_some()
-            || self.outline_end_color.is_some()
-            || self.outline_stroke.is_some()
-            || self.outline_border_inner.is_some()
-            || self.outline_border_outer.is_some();
-
-        let outline_config = if has_outline_overrides {
-            let parent_outline = parent.outline.clone().unwrap_or_default();
-            Some(OutlineConfig {
-                width: self.outline_width.or(parent_outline.width),
-                start_color: self.outline_start_color.or(parent_outline.start_color),
-                end_color: self.outline_end_color.or(parent_outline.end_color),
-                enabled: parent_outline.enabled,
-                stroke: self.outline_stroke.or(parent_outline.stroke),
-                border_inner: self.outline_border_inner.or(parent_outline.border_inner),
-                border_outer: self.outline_border_outer.or(parent_outline.border_outer),
-            })
-        } else {
-            parent.outline.clone()
+            parent.shadow
         };
 
         EdgeConfig {
-            stroke: stroke_config,
-            border: border_config,
-            shadow: shadow_config,
+            start_color,
+            end_color,
+            pattern,
+            border,
+            shadow,
             curve: self.curve.or(parent.curve),
-            outline: outline_config,
         }
     }
 
-    /// Builds the StrokePattern from individual inputs
-    fn build_pattern(&self, parent_stroke: &StrokeConfig) -> Option<StrokePattern> {
-        use iced_nodegraph::DashMotion;
-
+    /// Builds the Pattern from individual inputs
+    fn build_pattern(&self, parent: &EdgeConfig) -> Option<Pattern> {
         let pattern_type = self.pattern_type.unwrap_or(PatternType::Solid);
+        let thickness = self.thickness.unwrap_or(2.0);
         let dash = self.dash_length.unwrap_or(12.0);
         let gap = self.gap_length.unwrap_or(6.0);
-        let angle = self.pattern_angle.unwrap_or(std::f32::consts::FRAC_PI_4); // 45 degrees default
+        let angle = self.pattern_angle.unwrap_or(std::f32::consts::FRAC_PI_4);
         let dot_radius = self.dot_radius.unwrap_or(2.0);
         let speed = self.animation_speed.unwrap_or(0.0);
 
-        // Animation enabled if speed != 0.0 (negative = reverse)
-        let motion = if speed != 0.0 {
-            Some(DashMotion::new(speed))
-        } else {
-            None
+        let has_overrides = self.pattern_type.is_some() || self.thickness.is_some();
+
+        if !has_overrides && self.pattern_type.is_none() {
+            return parent.pattern;
+        }
+
+        let mut p = match pattern_type {
+            PatternType::Solid => Pattern::solid(thickness),
+            PatternType::Dashed => Pattern::dashed(thickness, dash, gap),
+            PatternType::Arrowed => Pattern::arrowed(thickness, dash, gap, angle),
+            PatternType::Angled => Pattern::dashed_angle(thickness, dash, gap, angle),
+            PatternType::Dotted => Pattern::dotted(gap, dot_radius),
+            PatternType::DashDotted => Pattern::dash_dotted(thickness, dash, gap, dot_radius),
         };
 
-        match pattern_type {
-            PatternType::Solid => {
-                // Keep parent pattern if solid selected and parent has pattern
-                if self.pattern_type.is_none() {
-                    parent_stroke.pattern.clone()
-                } else {
-                    Some(StrokePattern::Solid)
-                }
-            }
-            PatternType::Dashed => Some(StrokePattern::Dashed {
-                dash,
-                gap,
-                phase: 0.0,
-                motion,
-            }),
-            PatternType::Arrowed => Some(StrokePattern::Arrowed {
-                segment: dash,
-                gap,
-                angle,
-                phase: 0.0,
-                motion,
-            }),
-            PatternType::Angled => {
-                // Angled = Dashed with angled/parallelogram ends
-                // The dash_cap is set in build() based on pattern_type
-                Some(StrokePattern::Dashed {
-                    dash,
-                    gap,
-                    phase: 0.0,
-                    motion,
-                })
-            }
-            PatternType::Dotted => Some(StrokePattern::Dotted {
-                spacing: gap,       // gap_length = spacing between dots
-                radius: dot_radius, // dot_radius = size of each dot
-                phase: 0.0,
-                motion,
-            }),
-            PatternType::DashDotted => Some(StrokePattern::DashDotted {
-                dash,
-                gap,
-                dot_radius,
-                dot_gap: gap * 0.5,
-                phase: 0.0,
-                motion,
-            }),
+        if speed != 0.0 {
+            p = p.flow(speed);
         }
+
+        Some(p)
     }
 
     /// Returns the current pattern type
@@ -315,11 +215,10 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    // Get stroke values for display
-    let stroke = result.stroke.as_ref();
-    let start_color = stroke.and_then(|s| s.start_color);
-    let end_color = stroke.and_then(|s| s.end_color);
-    let thickness = stroke.and_then(|s| s.width);
+    // Get values for display
+    let start_color = result.start_color;
+    let end_color = result.end_color;
+    let thickness = result.pattern.map(|p| p.thickness);
 
     // Start color row
     let start_display: iced::Element<'a, Message> = if let Some(c) = start_color {
@@ -406,10 +305,7 @@ where
     // Curve type row
     let curve_label = match result.curve {
         Some(EdgeCurve::BezierCubic) => "bezier",
-        Some(EdgeCurve::BezierQuadratic) => "quadratic",
         Some(EdgeCurve::Line) => "line",
-        Some(EdgeCurve::Orthogonal) => "step",
-        Some(EdgeCurve::OrthogonalSmooth { .. }) => "smooth",
         None => "--",
     };
     let curve_row = row![
@@ -497,10 +393,10 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    // Pattern angle row (for Arrowed and Angled patterns)
+    // Pattern angle row
     let angle_display = inputs
         .pattern_angle
-        .map_or("--".to_string(), |v| format!("{:.0}°", v.to_degrees()));
+        .map_or("--".to_string(), |v| format!("{:.0} deg", v.to_degrees()));
     let angle_row = row![
         pin!(
             Left,
@@ -516,7 +412,7 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    // Animation speed row (0 = off, > 0 = animated)
+    // Animation speed row
     let speed_row = row![
         pin!(
             Left,
@@ -652,160 +548,6 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    // Outline width row
-    let outline_width_row = row![
-        pin!(
-            Left,
-            pins::config::OUTLINE_WIDTH,
-            text("ol.w").size(10),
-            Input,
-            pins::Float,
-            colors::PIN_NUMBER
-        ),
-        container(
-            text(
-                inputs
-                    .outline_width
-                    .map_or("--".to_string(), |v| format!("{:.1}", v))
-            )
-            .size(9)
-        )
-        .width(Length::Fill)
-        .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Outline start color row
-    let outline_start_display: iced::Element<'a, Message> =
-        if let Some(c) = inputs.outline_start_color {
-            container(text(""))
-                .width(20)
-                .height(12)
-                .style(move |_: &_| container::Style {
-                    background: Some(iced::Background::Color(c)),
-                    border: iced::Border {
-                        color: colors::PIN_ANY,
-                        width: 1.0,
-                        radius: 2.0.into(),
-                    },
-                    ..Default::default()
-                })
-                .into()
-        } else {
-            text("pin").size(9).into() // TRANSPARENT = inherit from pin
-        };
-    let outline_start_row = row![
-        pin!(
-            Left,
-            pins::config::OUTLINE_START_COLOR,
-            text("ol.sc").size(10),
-            Input,
-            pins::ColorData,
-            colors::PIN_COLOR
-        ),
-        container(outline_start_display)
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Outline end color row
-    let outline_end_display: iced::Element<'a, Message> =
-        if let Some(c) = inputs.outline_end_color {
-            container(text(""))
-                .width(20)
-                .height(12)
-                .style(move |_: &_| container::Style {
-                    background: Some(iced::Background::Color(c)),
-                    border: iced::Border {
-                        color: colors::PIN_ANY,
-                        width: 1.0,
-                        radius: 2.0.into(),
-                    },
-                    ..Default::default()
-                })
-                .into()
-        } else {
-            text("pin").size(9).into() // TRANSPARENT = inherit from pin
-        };
-    let outline_end_row = row![
-        pin!(
-            Left,
-            pins::config::OUTLINE_END_COLOR,
-            text("ol.ec").size(10),
-            Input,
-            pins::ColorData,
-            colors::PIN_COLOR
-        ),
-        container(outline_end_display)
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Outline stroke toggle row (outline around pattern/dashes)
-    let outline_stroke_label = match inputs.outline_stroke {
-        Some(true) => "yes",
-        Some(false) => "no",
-        None => "no", // Default is false
-    };
-    let outline_stroke_row = row![
-        pin!(
-            Left,
-            pins::config::OUTLINE_STROKE,
-            text("ol.str").size(10),
-            Input,
-            pins::Bool,
-            colors::PIN_BOOL
-        ),
-        container(text(outline_stroke_label).size(9))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Outline border inner toggle row
-    let outline_border_inner_label = match inputs.outline_border_inner {
-        Some(true) => "yes",
-        Some(false) => "no",
-        None => "no", // Default is false
-    };
-    let outline_border_inner_row = row![
-        pin!(
-            Left,
-            pins::config::OUTLINE_BORDER_INNER,
-            text("ol.bi").size(10),
-            Input,
-            pins::Bool,
-            colors::PIN_BOOL
-        ),
-        container(text(outline_border_inner_label).size(9))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Outline border outer toggle row
-    let outline_border_outer_label = match inputs.outline_border_outer {
-        Some(true) => "yes",
-        Some(false) => "no",
-        None => "no", // Default is false
-    };
-    let outline_border_outer_row = row![
-        pin!(
-            Left,
-            pins::config::OUTLINE_BORDER_OUTER,
-            text("ol.bo").size(10),
-            Input,
-            pins::Bool,
-            colors::PIN_BOOL
-        ),
-        container(text(outline_border_outer_label).size(9))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
     // Shadow blur row
     let shadow_blur_row = row![
         pin!(
@@ -829,25 +571,26 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    // Shadow offset row (combined x,y display)
-    let offset_display = match (inputs.shadow_offset_x, inputs.shadow_offset_y) {
-        (Some(x), Some(y)) => format!("{:.0},{:.0}", x, y),
-        (Some(x), None) => format!("{:.0},--", x),
-        (None, Some(y)) => format!("--,{:.0}", y),
-        (None, None) => "--".to_string(),
-    };
-    let shadow_offset_row = row![
+    // Shadow expand row
+    let shadow_expand_row = row![
         pin!(
             Left,
             pins::config::SHADOW_OFFSET,
-            text("s.offs").size(10),
+            text("s.exp").size(10),
             Input,
             pins::Float,
             colors::PIN_NUMBER
         ),
-        container(text(offset_display).size(9))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
+        container(
+            text(
+                inputs
+                    .shadow_expand
+                    .map_or("--".to_string(), |v| format!("{:.1}", v))
+            )
+            .size(9)
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
     ]
     .align_y(iced::Alignment::Center);
 
@@ -887,7 +630,7 @@ where
     // Build content with collapsible sections
     let mut content_items: Vec<iced::Element<'_, Message>> = vec![config_row.into()];
 
-    // Stroke section - pins inline when collapsed
+    // Stroke section
     let stroke_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.stroke {
         Some(
             row![
@@ -918,7 +661,7 @@ where
         content_items.push(curve_row.into());
     }
 
-    // Pattern section - pins inline when collapsed
+    // Pattern section
     let pattern_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.pattern {
         Some(
             row![
@@ -951,7 +694,7 @@ where
         content_items.push(speed_row.into());
     }
 
-    // Border section - pins inline when collapsed
+    // Border section
     let border_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.border {
         Some(
             row![
@@ -982,42 +725,7 @@ where
         content_items.push(border_end_row.into());
     }
 
-    // Outline section - pins inline when collapsed
-    let outline_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.outline {
-        Some(
-            row![
-                pin!(Left, pins::config::OUTLINE_WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::OUTLINE_START_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
-                pin!(Left, pins::config::OUTLINE_END_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
-                pin!(Left, pins::config::OUTLINE_STROKE, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
-                pin!(Left, pins::config::OUTLINE_BORDER_INNER, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
-                pin!(Left, pins::config::OUTLINE_BORDER_OUTER, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
-            ]
-            .spacing(2)
-            .into(),
-        )
-    } else {
-        None
-    };
-    content_items.push(
-        section_header_with_pins(
-            "Outline",
-            sections.outline,
-            on_toggle(EdgeSection::Outline),
-            outline_collapsed_pins,
-        )
-        .into(),
-    );
-    if sections.outline {
-        content_items.push(outline_width_row.into());
-        content_items.push(outline_start_row.into());
-        content_items.push(outline_end_row.into());
-        content_items.push(outline_stroke_row.into());
-        content_items.push(outline_border_inner_row.into());
-        content_items.push(outline_border_outer_row.into());
-    }
-
-    // Shadow section - pins inline when collapsed
+    // Shadow section
     let shadow_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.shadow {
         Some(
             row![
@@ -1042,7 +750,7 @@ where
     );
     if sections.shadow {
         content_items.push(shadow_blur_row.into());
-        content_items.push(shadow_offset_row.into());
+        content_items.push(shadow_expand_row.into());
         content_items.push(shadow_color_row.into());
     }
 

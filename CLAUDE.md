@@ -99,7 +99,7 @@ This workspace contains a node graph editor built on Iced 0.14:
 - **`iced_nodegraph`** - Custom node graph widget built on Iced GUI framework *(main project)*
 - **`ngwa-rs`** - SpacetimeDB module for backend data persistence (optional)
 
-**Dependencies**: Uses `iced = "0.14"` and `iced_wgpu = "0.14"` from crates.io (upstream).
+**Dependencies**: Uses `iced = "0.14"` from crates.io and `iced_sdf` for SDF-based rendering.
 
 **Current Status**: Core functionality is complete - node/pin interaction, edge connections, and coordinate transformations are fully functional with type-safe API.
 
@@ -137,17 +137,17 @@ The project uses **euclid** crate for type-safe coordinate transformations:
 - **NodeGraphEvent** (`src/node_graph/mod.rs`) - Unified event enum for all graph interactions
 - **State Management** (`src/node_graph/state.rs`) - Handles dragging states and camera state
 
-### Custom Rendering Pipeline
-Uses **WGPU shaders** for high-performance node graph rendering:
-- `src/node_graph/effects/pipeline/` contains WGPU rendering pipeline
-- `shader.wgsl` defines visual appearance of nodes/edges
-- Background/Foreground layers for proper rendering order
-- GPU-accelerated with custom vertex/fragment shaders
+### SDF-Based Rendering
+Uses **iced_sdf** for high-performance node graph rendering:
+- Nodes, edges, pins, and overlays rendered via SDF `Layer` + `Pattern` API
+- `Pattern` controls stroke appearance (solid, dashed, dotted, arrowed, etc.)
+- `Layer` composites fill, gradient, outline, blur, and expand effects
+- Background is a solid color (no grid shader)
 
 **Edge System**: Fully functional with type-safe API:
 - `push_edge(PinReference, PinReference)` adds connections between pins
 - Edge dragging and static edge rendering both work
-- Shader renders edges in foreground layer with proper bezier curves
+- SDF renders edges with bezier curves and configurable patterns
 
 **Plug Behavior**: Edge connections behave like physical plugs:
 - `EdgeConnected` fires immediately when dragging edge snaps to a compatible pin
@@ -206,17 +206,18 @@ let world_cursor: WorldPoint = camera.screen_to_world().transform_point(cursor_p
 - `PIN_CLICK_THRESHOLD = 8.0` pixels (in world space)
 - `EDGE_CLICK_THRESHOLD = 8.0` pixels (in world space)
 
-### Rendering Effects Pattern
-Custom effects use `shader::Primitive` trait:
-- Implement `prepare()` for GPU resource setup
-- Implement `render()` for actual drawing
-- Use `Pipeline` struct to manage WGPU resources
+### Style System Pattern
+Styles use `iced_sdf::Pattern` and `Layer` directly:
+- `EdgeStyle` has `pattern: Pattern` for stroke appearance, optional `EdgeBorder` and `EdgeShadow`
+- `NodeStyle` has optional `NodeBorder` (with `pattern: Pattern`) and `NodeShadow`
+- Config types (`NodeConfig`, `EdgeConfig`) use `Option<T>` for partial overrides with `merge()`
+- `Pattern::solid(width)`, `Pattern::dashed(w, dash, gap)`, etc. for stroke patterns
 
 ## Key Integration Points
 
 ### Iced Framework
 - Uses **iced 0.14** from crates.io (upstream)
-- Uses advanced renderer features (`iced_wgpu::primitive::Renderer`)
+- Uses advanced renderer features via `iced_sdf`
 - Requires `features = ["advanced", "wgpu", "tokio"]`
 
 ### Cross-Project Dependencies
@@ -242,18 +243,6 @@ Custom effects use `shader::Primitive` trait:
 | `content.rs` | Layout helpers | `node_header()`, `node_footer()`, `simple_node()` |
 | `helpers.rs` | Utilities | `clone_nodes()`, `delete_nodes()`, `SelectionHelper` |
 
-### Rendering Pipeline (iced_nodegraph/src/node_graph/effects/)
-
-| File | Purpose |
-|------|---------|
-| `mod.rs` | Effect orchestration |
-| `pipeline/mod.rs` | WGPU pipeline setup |
-| `pipeline/buffer.rs` | GPU buffer management |
-| `pipeline/types.rs` | Vertex/uniform types |
-| `primitive/mod.rs` | Render primitive trait |
-| `primitive/node.rs` | Node rendering |
-| `primitive/pin.rs` | Pin rendering |
-
 ### Demo Applications (demos/)
 
 | Demo | Purpose | Key Patterns |
@@ -269,8 +258,7 @@ lib.rs (public API)
   ├── node_graph/ (widget)
   │     ├── widget.rs (iced Widget trait)
   │     ├── state.rs (interaction)
-  │     ├── camera.rs (transforms)
-  │     └── effects/ (GPU rendering)
+  │     └── camera.rs (transforms)
   ├── node_pin/ (pin widget)
   ├── style/ (theming)
   ├── content.rs (layout helpers)
@@ -323,4 +311,4 @@ ng.node_position(node_id) -> Option<Point>
 ng.edges() -> Iterator<Item = (PinReference, PinReference, Option<&EdgeStyle>)>
 ```
 
-When adding features, maintain the coordinate system abstractions and follow the effects pipeline pattern for any custom rendering.
+When adding features, maintain the coordinate system abstractions and use `iced_sdf` Layer/Pattern API for custom rendering.

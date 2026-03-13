@@ -446,7 +446,6 @@ impl Application {
                     self.palette_selected_index,
                     Message::CommandPaletteInput,
                     Message::CommandPaletteSelect,
-                    Message::CommandPaletteNavigate,
                     || Message::CommandPaletteCancel,
                 )
             ]

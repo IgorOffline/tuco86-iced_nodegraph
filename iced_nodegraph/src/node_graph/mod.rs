@@ -53,10 +53,17 @@ use crate::style::{
 };
 
 pub mod camera;
-pub(crate) mod effects;
 pub(crate) mod euclid;
 pub(crate) mod state;
 pub(crate) mod widget;
+
+/// Shared per-frame rendering context for all primitives.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RenderContext {
+    pub camera_zoom: f32,
+    pub camera_position: euclid::WorldPoint,
+    pub time: f32,
+}
 
 #[cfg(test)]
 mod interaction_tests;

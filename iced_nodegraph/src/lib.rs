@@ -6,7 +6,7 @@
 //! # iced_nodegraph
 //!
 //! A high-performance node graph editor widget for the [Iced](https://github.com/iced-rs/iced) GUI framework,
-//! featuring GPU-accelerated rendering with custom WGPU shaders and type-safe coordinate transformations.
+//! featuring SDF-based rendering and type-safe coordinate transformations.
 //!
 //! ## Features
 //!
@@ -202,32 +202,23 @@ pub use node_graph::{
 };
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
 pub use style::{
-    // Background style types
-    BackgroundConfig,
-    BackgroundPattern,
-    BackgroundStyle,
     // Config types (partial overrides with merge())
-    BorderConfig,
-    // Edge style layer types
-    BorderStyle,
-    DashCap,
-    DashMotion,
     EdgeConfig,
     EdgeCurve,
-    EdgeShadowConfig,
-    EdgeShadowStyle,
     EdgeStyle,
     // Style function types (Iced Toggler pattern)
     EdgeStyleFn,
+    // Edge style layer types
+    EdgeBorder,
+    EdgeShadow,
     GraphConfig,
     GraphStyle,
-    NodeBorderStyle,
+    // Node style types
+    NodeBorder,
     NodeConfig,
+    NodeShadow,
     NodeStyle,
     NodeStyleFn,
-    // Outline style types (NO pin color inheritance)
-    OutlineConfig,
-    OutlineStyle,
     PinConfig,
     PinShape,
     PinStatus,
@@ -240,15 +231,13 @@ pub use style::{
     SelectionConfig,
     SelectionStyle,
     ShadowConfig,
-    ShadowStyle,
-    StrokeCap,
-    StrokeConfig,
-    StrokePattern,
-    StrokeStyle,
     is_dark_theme,
     relative_luminance,
     theme_name,
 };
+
+// Re-export iced_sdf::Pattern for downstream crates
+pub use iced_sdf::Pattern;
 
 pub mod content;
 pub mod helpers;

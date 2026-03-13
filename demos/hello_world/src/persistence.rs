@@ -17,9 +17,9 @@ use std::path::PathBuf;
 
 use crate::ids::{EdgeId, NodeId};
 use crate::nodes::{
-    BackgroundConfigInputs, BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSections,
+    BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSections,
     FloatSliderConfig, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
-    NodeConfigInputs, NodeSections, NodeType, PatternType, PatternTypeSelection, PinConfigInputs,
+    NodeConfigInputs, NodeSections, NodeType, PatternType, PinConfigInputs,
     ShadowConfigInputs,
 };
 use iced_nodegraph::{EdgeCurve, PinShape};
@@ -30,8 +30,6 @@ pub struct SavedEdgeSections {
     pub stroke: bool,
     pub pattern: bool,
     pub border: bool,
-    #[serde(default)]
-    pub outline: bool,
     pub shadow: bool,
 }
 
@@ -41,7 +39,6 @@ impl From<&EdgeSections> for SavedEdgeSections {
             stroke: s.stroke,
             pattern: s.pattern,
             border: s.border,
-            outline: s.outline,
             shadow: s.shadow,
         }
     }
@@ -53,7 +50,6 @@ impl SavedEdgeSections {
             stroke: self.stroke,
             pattern: self.pattern,
             border: self.border,
-            outline: self.outline,
             shadow: self.shadow,
         }
     }
@@ -166,14 +162,10 @@ pub enum SavedNodeType {
     PatternTypeSelector {
         pattern: String,
     },
-    BackgroundPatternSelector {
-        pattern: String,
-    },
     NodeConfig,
     EdgeConfig,
     ShadowConfig,
     PinConfig,
-    BackgroundConfig,
     ApplyToGraph,
     ApplyToNode,
     Math {
@@ -471,18 +463,12 @@ impl SavedNodeType {
                         pattern: pattern_type_to_string(value),
                     }
                 }
-                InputNodeType::BackgroundPatternSelector { value } => {
-                    SavedNodeType::BackgroundPatternSelector {
-                        pattern: background_pattern_to_string(value),
-                    }
-                }
             },
             NodeType::Config(config) => match config {
                 ConfigNodeType::NodeConfig(_) => SavedNodeType::NodeConfig,
                 ConfigNodeType::EdgeConfig(_) => SavedNodeType::EdgeConfig,
                 ConfigNodeType::ShadowConfig(_) => SavedNodeType::ShadowConfig,
                 ConfigNodeType::PinConfig(_) => SavedNodeType::PinConfig,
-                ConfigNodeType::BackgroundConfig(_) => SavedNodeType::BackgroundConfig,
                 ConfigNodeType::ApplyToGraph { .. } => SavedNodeType::ApplyToGraph,
                 ConfigNodeType::ApplyToNode { .. } => SavedNodeType::ApplyToNode,
             },
@@ -558,11 +544,6 @@ impl SavedNodeType {
                     value: string_to_pattern_type(pattern),
                 })
             }
-            SavedNodeType::BackgroundPatternSelector { pattern } => {
-                NodeType::Input(InputNodeType::BackgroundPatternSelector {
-                    value: string_to_background_pattern(pattern),
-                })
-            }
             SavedNodeType::NodeConfig => {
                 NodeType::Config(ConfigNodeType::NodeConfig(NodeConfigInputs::default()))
             }
@@ -575,14 +556,10 @@ impl SavedNodeType {
             SavedNodeType::PinConfig => {
                 NodeType::Config(ConfigNodeType::PinConfig(PinConfigInputs::default()))
             }
-            SavedNodeType::BackgroundConfig => NodeType::Config(ConfigNodeType::BackgroundConfig(
-                BackgroundConfigInputs::default(),
-            )),
             SavedNodeType::ApplyToGraph => NodeType::Config(ConfigNodeType::ApplyToGraph {
                 has_node_config: false,
                 has_edge_config: false,
                 has_pin_config: false,
-                has_background_config: false,
             }),
             SavedNodeType::ApplyToNode => NodeType::Config(ConfigNodeType::ApplyToNode {
                 has_node_config: false,
@@ -690,26 +667,13 @@ fn string_to_theme(s: &str) -> Theme {
 fn edge_curve_to_string(curve: EdgeCurve) -> String {
     match curve {
         EdgeCurve::BezierCubic => "BezierCubic",
-        EdgeCurve::BezierQuadratic => "BezierQuadratic",
-        EdgeCurve::Orthogonal => "Orthogonal",
-        EdgeCurve::OrthogonalSmooth { radius } => return format!("OrthogonalSmooth:{}", radius),
         EdgeCurve::Line => "Line",
     }
     .to_string()
 }
 
 fn string_to_edge_curve(s: &str) -> EdgeCurve {
-    if s.starts_with("OrthogonalSmooth:") {
-        let radius = s
-            .strip_prefix("OrthogonalSmooth:")
-            .and_then(|r| r.parse::<f32>().ok())
-            .unwrap_or(10.0);
-        return EdgeCurve::OrthogonalSmooth { radius };
-    }
     match s {
-        "BezierCubic" => EdgeCurve::BezierCubic,
-        "BezierQuadratic" => EdgeCurve::BezierQuadratic,
-        "Orthogonal" => EdgeCurve::Orthogonal,
         "Line" => EdgeCurve::Line,
         _ => EdgeCurve::BezierCubic,
     }
@@ -756,32 +720,6 @@ fn string_to_pattern_type(s: &str) -> PatternType {
         "Dotted" => PatternType::Dotted,
         "DashDotted" => PatternType::DashDotted,
         _ => PatternType::Solid,
-    }
-}
-
-fn background_pattern_to_string(pattern: &PatternTypeSelection) -> String {
-    match pattern {
-        PatternTypeSelection::None => "None",
-        PatternTypeSelection::Grid => "Grid",
-        PatternTypeSelection::Hex => "Hex",
-        PatternTypeSelection::Triangle => "Triangle",
-        PatternTypeSelection::Dots => "Dots",
-        PatternTypeSelection::Lines => "Lines",
-        PatternTypeSelection::Crosshatch => "Crosshatch",
-    }
-    .to_string()
-}
-
-fn string_to_background_pattern(s: &str) -> PatternTypeSelection {
-    match s {
-        "None" => PatternTypeSelection::None,
-        "Grid" => PatternTypeSelection::Grid,
-        "Hex" => PatternTypeSelection::Hex,
-        "Triangle" => PatternTypeSelection::Triangle,
-        "Dots" => PatternTypeSelection::Dots,
-        "Lines" => PatternTypeSelection::Lines,
-        "Crosshatch" => PatternTypeSelection::Crosshatch,
-        _ => PatternTypeSelection::Grid,
     }
 }
 

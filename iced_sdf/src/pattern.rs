@@ -55,7 +55,7 @@ pub enum PatternType {
 }
 
 /// Pattern configuration for SDF rendering.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pattern {
     /// Stroke thickness.
     pub thickness: f32,

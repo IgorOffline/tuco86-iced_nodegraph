@@ -3,7 +3,7 @@ name = "iced_nodegraph"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-description = "High-performance node graph editor widget for Iced with custom WGPU shaders"
+description = "High-performance node graph editor widget for Iced with SDF-based rendering"
 repository.workspace = true
 license.workspace = true
 readme = "README.md"
@@ -13,9 +13,6 @@ categories = ["gui", "graphics", "visualization"]
 [dependencies]
 euclid.workspace = true
 iced_sdf.workspace = true
-bytemuck.workspace = true
-glam.workspace = true
-encase.workspace = true
 iced_wgpu.workspace = true
 iced_widget.workspace = true
 # webgl feature adds WebGL2 fallback for browsers without WebGPU (ignored on native)

@@ -45,7 +45,7 @@ use iced::{
     widget::{container, stack, text},
     window,
 };
-use iced_nodegraph::{BackgroundConfig, EdgeConfig, NodeConfig, PinConfig, PinRef, ShadowConfig};
+use iced_nodegraph::{EdgeConfig, NodeConfig, PinConfig, PinRef, ShadowConfig};
 use iced_nodegraph::{EdgeCurve, PinShape};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
@@ -53,11 +53,11 @@ use iced_palette::{
 };
 use ids::{EdgeId, NodeId, PinLabel, generate_edge_id, generate_node_id};
 use nodes::{
-    BackgroundConfigInputs, BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSection,
+    BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSection,
     EdgeSections, FloatSliderConfig, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
     NodeConfigInputs, NodeSection, NodeSections, NodeType, NodeValue, PatternType,
-    PatternTypeSelection, PinConfigInputs, ShadowConfigInputs, apply_to_graph_node,
-    apply_to_node_node, background_config_node, background_pattern_selector_node, bool_toggle_node,
+    PinConfigInputs, ShadowConfigInputs, apply_to_graph_node,
+    apply_to_node_node, bool_toggle_node,
     color_picker_node, color_preset_node, edge_config_node, edge_curve_selector_node,
     float_slider_node, int_slider_node, math_node, node, node_config_node,
     pattern_type_selector_node, pin_config_node, pin_shape_selector_node, shadow_config_node,
@@ -201,10 +201,6 @@ enum ApplicationMessage {
         node_id: NodeId,
         value: PatternType,
     },
-    BackgroundPatternChanged {
-        node_id: NodeId,
-        value: PatternTypeSelection,
-    },
     ColorChanged {
         node_id: NodeId,
         color: Color,
@@ -245,7 +241,6 @@ enum ConfigOutput {
     Node(NodeConfig),
     Edge(EdgeConfig),
     Pin(iced_nodegraph::PinConfig),
-    Background(BackgroundConfig),
 }
 
 /// Computed style values from connected config nodes
@@ -259,20 +254,12 @@ struct ComputedStyle {
     edge_thickness: Option<f32>,
     edge_color: Option<Color>,
     edge_curve: Option<EdgeCurve>,
-    edge_pattern: Option<iced_nodegraph::StrokePattern>,
-    edge_dash_cap: Option<iced_nodegraph::DashCap>,
-    // Edge border, outline, and shadow
-    edge_border: Option<iced_nodegraph::BorderConfig>,
-    edge_outline: Option<iced_nodegraph::OutlineConfig>,
-    edge_shadow: Option<iced_nodegraph::EdgeShadowConfig>,
     // Pin config values
     pin_color: Option<Color>,
     pin_radius: Option<f32>,
     pin_shape: Option<iced_nodegraph::PinShape>,
     pin_border_color: Option<Color>,
     pin_border_width: Option<f32>,
-    // Background config
-    background: Option<BackgroundConfig>,
 }
 
 impl ComputedStyle {
@@ -309,21 +296,6 @@ impl ComputedStyle {
         }
         if let Some(curve) = self.edge_curve {
             config = config.curve(curve);
-        }
-        if let Some(ref pattern) = self.edge_pattern {
-            config = config.pattern(pattern.clone());
-        }
-        if let Some(ref dash_cap) = self.edge_dash_cap {
-            config = config.dash_cap(*dash_cap);
-        }
-        if let Some(ref border) = self.edge_border {
-            config.border = Some(border.clone());
-        }
-        if let Some(ref outline) = self.edge_outline {
-            config.outline = Some(outline.clone());
-        }
-        if let Some(ref shadow) = self.edge_shadow {
-            config.shadow = Some(shadow.clone());
         }
         config
     }
@@ -782,19 +754,14 @@ impl Application {
                     ConfigNodeType::EdgeConfig(inputs) => *inputs = EdgeConfigInputs::default(),
                     ConfigNodeType::ShadowConfig(inputs) => *inputs = ShadowConfigInputs::default(),
                     ConfigNodeType::PinConfig(inputs) => *inputs = PinConfigInputs::default(),
-                    ConfigNodeType::BackgroundConfig(inputs) => {
-                        *inputs = BackgroundConfigInputs::default()
-                    }
                     ConfigNodeType::ApplyToGraph {
                         has_node_config,
                         has_edge_config,
                         has_pin_config,
-                        has_background_config,
                     } => {
                         *has_node_config = false;
                         *has_edge_config = false;
                         *has_pin_config = false;
-                        *has_background_config = false;
                     }
                     ConfigNodeType::ApplyToNode {
                         has_node_config,
@@ -1045,27 +1012,11 @@ impl Application {
                     inputs.border_start_color = value.as_color();
                 } else if *pin_label == pin::BORDER_END_COLOR {
                     inputs.border_end_color = value.as_color();
-                // Unified outline settings (width > 0 enables outline)
-                } else if *pin_label == pin::OUTLINE_WIDTH {
-                    inputs.outline_width = value.as_float();
-                } else if *pin_label == pin::OUTLINE_START_COLOR {
-                    inputs.outline_start_color = value.as_color();
-                } else if *pin_label == pin::OUTLINE_END_COLOR {
-                    inputs.outline_end_color = value.as_color();
-                } else if *pin_label == pin::OUTLINE_STROKE {
-                    inputs.outline_stroke = value.as_bool();
-                } else if *pin_label == pin::OUTLINE_BORDER_INNER {
-                    inputs.outline_border_inner = value.as_bool();
-                } else if *pin_label == pin::OUTLINE_BORDER_OUTER {
-                    inputs.outline_border_outer = value.as_bool();
-                // Shadow settings (blur > 0 enables shadow)
+                // Shadow settings
                 } else if *pin_label == pin::SHADOW_BLUR {
                     inputs.shadow_blur = value.as_float();
                 } else if *pin_label == pin::SHADOW_OFFSET {
-                    // Single offset value sets both x and y
-                    let offset = value.as_float();
-                    inputs.shadow_offset_x = offset;
-                    inputs.shadow_offset_y = offset;
+                    inputs.shadow_expand = value.as_float();
                 } else if *pin_label == pin::SHADOW_COLOR {
                     inputs.shadow_color = value.as_color();
                 }
@@ -1102,20 +1053,6 @@ impl Application {
                     inputs.border_width = value.as_float();
                 }
             }
-            ConfigNodeType::BackgroundConfig(inputs) => {
-                // BackgroundConfig pin labels
-                if *pin_label == pin::PATTERN {
-                    inputs.pattern = value.as_background_pattern();
-                } else if *pin_label == pin::BACKGROUND_COLOR {
-                    inputs.background_color = value.as_color();
-                } else if *pin_label == pin::PRIMARY_COLOR {
-                    inputs.primary_color = value.as_color();
-                } else if *pin_label == pin::MINOR_SPACING {
-                    inputs.minor_spacing = value.as_float();
-                } else if *pin_label == pin::ADAPTIVE_ZOOM {
-                    inputs.adaptive_zoom = value.as_bool();
-                }
-            }
             ConfigNodeType::ApplyToNode { target_id, .. } => {
                 if *pin_label == pin::TARGET {
                     *target_id = value.as_int();
@@ -1146,9 +1083,6 @@ impl Application {
             Some((_, NodeType::Config(ConfigNodeType::PinConfig(inputs)))) => {
                 Some(ConfigOutput::Pin(inputs.build()))
             }
-            Some((_, NodeType::Config(ConfigNodeType::BackgroundConfig(inputs)))) => {
-                Some(ConfigOutput::Background(inputs.build()))
-            }
             _ => None,
         };
 
@@ -1160,10 +1094,8 @@ impl Application {
             has_node_config,
             has_edge_config,
             has_pin_config,
-            has_background_config,
         }) = node_type
         {
-            // ApplyToGraph pin labels: node, edge, pin, background
             if *apply_pin_label == pin::NODE_CONFIG {
                 if matches!(&built_config, Some(ConfigOutput::Node(_))) {
                     *has_node_config = true;
@@ -1172,14 +1104,11 @@ impl Application {
                 if matches!(&built_config, Some(ConfigOutput::Edge(_))) {
                     *has_edge_config = true;
                 }
-            } else if *apply_pin_label == pin::PIN_CONFIG {
-                if matches!(&built_config, Some(ConfigOutput::Pin(_))) {
-                    *has_pin_config = true;
-                }
-            } else if *apply_pin_label == pin::BACKGROUND_CONFIG
-                && matches!(&built_config, Some(ConfigOutput::Background(_))) {
-                    *has_background_config = true;
-                }
+            } else if *apply_pin_label == pin::PIN_CONFIG
+                && matches!(&built_config, Some(ConfigOutput::Pin(_)))
+            {
+                *has_pin_config = true;
+            }
         }
 
         // Store the config for later application
@@ -1199,22 +1128,20 @@ impl Application {
                 has_node_config,
                 has_edge_config,
                 has_pin_config,
-                has_background_config,
             }) = node_type
                 && let Some(configs) = self.pending_configs.get(node_id) {
                     for (_, config) in configs {
                         match config {
                             ConfigOutput::Node(node_config) => {
                                 if *has_node_config {
-                                    // Apply node config to computed style
                                     if let Some(r) = node_config.corner_radius {
                                         computed.corner_radius = Some(r);
                                     }
                                     if let Some(o) = node_config.opacity {
                                         computed.opacity = Some(o);
                                     }
-                                    if let Some(w) = node_config.border_width {
-                                        computed.border_width = Some(w);
+                                    if let Some(ref b) = node_config.border {
+                                        computed.border_width = Some(b.pattern.thickness);
                                     }
                                     if let Some(c) = node_config.fill_color {
                                         computed.fill_color = Some(c);
@@ -1226,41 +1153,19 @@ impl Application {
                             }
                             ConfigOutput::Edge(edge_config) => {
                                 if *has_edge_config {
-                                    // Apply edge config to computed style
-                                    if let Some(stroke) = &edge_config.stroke {
-                                        if let Some(t) = stroke.width {
-                                            computed.edge_thickness = Some(t);
-                                        }
-                                        if let Some(c) = stroke.start_color {
-                                            computed.edge_color = Some(c);
-                                        }
-                                        if let Some(ref p) = stroke.pattern {
-                                            computed.edge_pattern = Some(p.clone());
-                                        }
-                                        if let Some(ref dc) = stroke.dash_cap {
-                                            computed.edge_dash_cap = Some(*dc);
-                                        }
+                                    if let Some(p) = edge_config.pattern {
+                                        computed.edge_thickness = Some(p.thickness);
+                                    }
+                                    if let Some(c) = edge_config.start_color {
+                                        computed.edge_color = Some(c);
                                     }
                                     if let Some(curve) = edge_config.curve {
                                         computed.edge_curve = Some(curve);
-                                    }
-                                    // Apply border config
-                                    if let Some(ref border) = edge_config.border {
-                                        computed.edge_border = Some(border.clone());
-                                    }
-                                    // Apply outline config (comic book effect)
-                                    if let Some(ref outline) = edge_config.outline {
-                                        computed.edge_outline = Some(outline.clone());
-                                    }
-                                    // Apply shadow config
-                                    if let Some(ref shadow) = edge_config.shadow {
-                                        computed.edge_shadow = Some(shadow.clone());
                                     }
                                 }
                             }
                             ConfigOutput::Pin(pin_config) => {
                                 if *has_pin_config {
-                                    // Apply pin config to computed style
                                     if let Some(c) = pin_config.color {
                                         computed.pin_color = Some(c);
                                     }
@@ -1276,12 +1181,6 @@ impl Application {
                                     if let Some(w) = pin_config.border_width {
                                         computed.pin_border_width = Some(w);
                                     }
-                                }
-                            }
-                            ConfigOutput::Background(bg_config) => {
-                                if *has_background_config {
-                                    // Store the background config for later application
-                                    computed.background = Some(bg_config.clone());
                                 }
                             }
                         }
@@ -1708,17 +1607,6 @@ impl Application {
                 }
                 Task::none()
             }
-            ApplicationMessage::BackgroundPatternChanged { node_id, value } => {
-                if let Some((
-                    _,
-                    NodeType::Input(InputNodeType::BackgroundPatternSelector { value: v }),
-                )) = self.nodes.get_mut(&node_id)
-                {
-                    *v = value;
-                    self.propagate_values();
-                }
-                Task::none()
-            }
             ApplicationMessage::ColorChanged { node_id, color } => {
                 if let Some((_, node_type)) = self.nodes.get_mut(&node_id) {
                     match node_type {
@@ -1771,7 +1659,6 @@ impl Application {
                     EdgeSection::Stroke => sections.stroke = !sections.stroke,
                     EdgeSection::Pattern => sections.pattern = !sections.pattern,
                     EdgeSection::Border => sections.border = !sections.border,
-                    EdgeSection::Outline => sections.outline = !sections.outline,
                     EdgeSection::Shadow => sections.shadow = !sections.shadow,
                 }
                 Task::none()
@@ -1874,7 +1761,7 @@ impl Application {
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
-        use iced_nodegraph::{GraphStyle, NodeGraph, PinRef};
+        use iced_nodegraph::{NodeGraph, PinRef};
 
         // Use preview theme if active (for theme selection), otherwise current theme
         let theme = self
@@ -1936,12 +1823,10 @@ impl Application {
                 base
             })
             .edge_style(|_theme, status, base| {
-                use iced_nodegraph::{EdgeStatus, StrokeStyle};
+                use iced_nodegraph::EdgeStatus;
                 match status {
                     EdgeStatus::PendingCut => {
-                        // Override stroke color to red for edges being cut
-                        let cut_stroke = StrokeStyle::new().color(iced::Color::from_rgb(1.0, 0.3, 0.3));
-                        base.stroke(cut_stroke)
+                        base.solid_color(iced::Color::from_rgb(1.0, 0.3, 0.3))
                     }
                     EdgeStatus::Idle => base,
                 }
@@ -2049,15 +1934,6 @@ impl Application {
                             }
                         })
                     }
-                    InputNodeType::BackgroundPatternSelector { value } => {
-                        let id = node_id_clone.clone();
-                        background_pattern_selector_node(theme, *value, move |v| {
-                            ApplicationMessage::BackgroundPatternChanged {
-                                node_id: id.clone(),
-                                value: v,
-                            }
-                        })
-                    }
                     InputNodeType::ColorPicker { color } => {
                         let id = node_id_clone.clone();
                         color_picker_node(theme, *color, move |c| {
@@ -2100,20 +1976,15 @@ impl Application {
                     }
                     ConfigNodeType::ShadowConfig(inputs) => shadow_config_node(theme, inputs),
                     ConfigNodeType::PinConfig(inputs) => pin_config_node(theme, inputs),
-                    ConfigNodeType::BackgroundConfig(inputs) => {
-                        background_config_node(theme, inputs)
-                    }
                     ConfigNodeType::ApplyToGraph {
                         has_node_config,
                         has_edge_config,
                         has_pin_config,
-                        has_background_config,
                     } => apply_to_graph_node(
                         theme,
                         *has_node_config,
                         *has_edge_config,
                         *has_pin_config,
-                        *has_background_config,
                     ),
                     ConfigNodeType::ApplyToNode {
                         has_node_config,
@@ -2146,12 +2017,6 @@ impl Application {
         // Set edge defaults for dragging edge preview
         ng = ng.edge_defaults(edge_config);
 
-        // Apply background config to graph style
-        if let Some(bg_config) = &self.computed_style.background {
-            let graph_style = GraphStyle::default().background(bg_config.resolve());
-            ng = ng.graph_style(graph_style);
-        }
-
         let graph_view: iced::Element<'_, ApplicationMessage> = ng.into();
 
         // Always use the same widget structure to preserve NodeGraph state
@@ -2164,7 +2029,6 @@ impl Application {
                 self.palette_selected_index,
                 ApplicationMessage::CommandPaletteInput,
                 ApplicationMessage::CommandPaletteSelect,
-                ApplicationMessage::CommandPaletteNavigate,
                 || ApplicationMessage::CommandPaletteCancel,
             )
         } else {
@@ -2307,13 +2171,6 @@ impl Application {
                                 value: PatternType::Solid,
                             }),
                         }),
-                    command("bg_pattern", "Background Pattern Selector")
-                        .description("Select background pattern (Grid, Hex, Dots, etc.)")
-                        .action(ApplicationMessage::SpawnNode {
-                            node_type: NodeType::Input(InputNodeType::BackgroundPatternSelector {
-                                value: PatternTypeSelection::Grid,
-                            }),
-                        }),
                 ];
                 ("Input Nodes", commands)
             }
@@ -2372,13 +2229,6 @@ impl Application {
                                 PinConfigInputs::default(),
                             )),
                         }),
-                    command("background_config", "Background Config")
-                        .description("Background pattern, colors, spacing, adaptive zoom")
-                        .action(ApplicationMessage::SpawnNode {
-                            node_type: NodeType::Config(ConfigNodeType::BackgroundConfig(
-                                BackgroundConfigInputs::default(),
-                            )),
-                        }),
                     // Apply nodes
                     command("apply_to_graph", "Apply to Graph")
                         .description("Apply configs to all nodes/edges in graph")
@@ -2387,7 +2237,6 @@ impl Application {
                                 has_node_config: false,
                                 has_edge_config: false,
                                 has_pin_config: false,
-                                has_background_config: false,
                             }),
                         }),
                     command("apply_to_node", "Apply to Node")
