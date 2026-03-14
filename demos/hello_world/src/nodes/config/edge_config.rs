@@ -4,14 +4,16 @@
 
 use iced::{
     Color, Length,
-    alignment::Horizontal,
     widget::{column, container, row, text},
 };
 use iced_nodegraph::{
     EdgeBorder, EdgeConfig, EdgeCurve, EdgeShadow, NodeContentStyle, Pattern, pin,
 };
 
-use crate::nodes::{colors, node_title_bar, pins, section_header_with_pins};
+use crate::nodes::{
+    collapsed_pin_row, color_swatch, colors, fmt_float, node_title_bar, pin_row, pins,
+    push_section, value_display,
+};
 
 /// Section expansion state for EdgeConfig nodes
 #[derive(Debug, Clone, Default)]
@@ -43,15 +45,20 @@ pub enum EdgeSection {
 }
 
 /// Pattern type for simple selection (maps to iced_sdf::Pattern)
+/// Pattern type selection aligned with iced_sdf's PatternType variants.
+///
+/// `Dashed` always uses `dashed_angle()` with an angle parameter (0 = square caps).
+/// `DashCapped` uses `dash_capped_angle()` for round-capped dashes with angle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PatternType {
     #[default]
     Solid,
+    /// Square-capped dashes with configurable angle (0 = perpendicular caps)
     Dashed,
+    /// Round-capped dashes with configurable angle
+    DashCapped,
     /// Arrow-like marks (///) crossing the edge
     Arrowed,
-    /// Dashed with angled/parallelogram ends
-    Angled,
     Dotted,
     DashDotted,
 }
@@ -61,28 +68,40 @@ pub enum PatternType {
 pub struct EdgeConfigInputs {
     /// Parent config to inherit from
     pub config_in: Option<EdgeConfig>,
-    /// Individual field overrides
+
+    // --- Stroke ---
     pub start_color: Option<Color>,
     pub end_color: Option<Color>,
     pub thickness: Option<f32>,
     pub curve: Option<EdgeCurve>,
-    /// Pattern settings
+    pub stroke_outline_thickness: Option<f32>,
+    pub stroke_outline_color: Option<Color>,
+
+    // --- Pattern ---
     pub pattern_type: Option<PatternType>,
     pub dash_length: Option<f32>,
     pub gap_length: Option<f32>,
     pub pattern_angle: Option<f32>,
     pub dot_radius: Option<f32>,
-    /// Animation speed (0.0 = no animation, > 0.0 = animated)
     pub animation_speed: Option<f32>,
-    /// Border settings
-    pub border_width: Option<f32>,
+
+    // --- Border ---
+    pub border_thickness: Option<f32>,
     pub border_gap: Option<f32>,
-    pub border_start_color: Option<Color>,
-    pub border_end_color: Option<Color>,
-    /// Shadow settings
+    pub border_color: Option<Color>,
+    pub border_color_end: Option<Color>,
+    pub border_background: Option<Color>,
+    pub border_background_end: Option<Color>,
+    pub border_outline_thickness: Option<f32>,
+    pub border_outline_color: Option<Color>,
+
+    // --- Shadow ---
     pub shadow_expand: Option<f32>,
     pub shadow_blur: Option<f32>,
     pub shadow_color: Option<Color>,
+    pub shadow_color_end: Option<Color>,
+    pub shadow_offset_x: Option<f32>,
+    pub shadow_offset_y: Option<f32>,
 }
 
 impl EdgeConfigInputs {
@@ -97,20 +116,50 @@ impl EdgeConfigInputs {
         let start_color = self.start_color.or(parent.start_color);
         let end_color = self.end_color.or(parent.end_color);
 
+        // Stroke outline
+        let has_stroke_outline = self.stroke_outline_thickness.is_some()
+            || self.stroke_outline_color.is_some();
+        let stroke_outline = if has_stroke_outline {
+            let parent_ol = parent.stroke_outline.unwrap_or((1.0, Color::WHITE));
+            Some((
+                self.stroke_outline_thickness.unwrap_or(parent_ol.0),
+                self.stroke_outline_color.unwrap_or(parent_ol.1),
+            ))
+        } else {
+            parent.stroke_outline
+        };
+
         // Build border config
-        let has_border_overrides = self.border_width.is_some()
+        let has_border_overrides = self.border_thickness.is_some()
             || self.border_gap.is_some()
-            || self.border_start_color.is_some()
-            || self.border_end_color.is_some();
+            || self.border_color.is_some()
+            || self.border_color_end.is_some()
+            || self.border_background.is_some()
+            || self.border_background_end.is_some()
+            || self.border_outline_thickness.is_some()
+            || self.border_outline_color.is_some();
 
         let border = if has_border_overrides {
             let pb = parent.border.unwrap_or_default();
+            let has_ol = self.border_outline_thickness.is_some()
+                || self.border_outline_color.is_some();
+            let outline = if has_ol {
+                let parent_ol = pb.outline.unwrap_or((1.0, Color::WHITE));
+                Some((
+                    self.border_outline_thickness.unwrap_or(parent_ol.0),
+                    self.border_outline_color.unwrap_or(parent_ol.1),
+                ))
+            } else {
+                pb.outline
+            };
             Some(EdgeBorder {
-                start_color: self.border_start_color.unwrap_or(pb.start_color),
-                end_color: self.border_end_color.unwrap_or(pb.end_color),
-                width: self.border_width.unwrap_or(pb.width),
+                start_color: self.border_color.unwrap_or(pb.start_color),
+                end_color: self.border_color_end.unwrap_or(pb.end_color),
+                width: self.border_thickness.unwrap_or(pb.width),
                 gap: self.border_gap.unwrap_or(pb.gap),
-                outline: pb.outline,
+                outline,
+                background: self.border_background.unwrap_or(pb.background),
+                background_end: self.border_background_end.unwrap_or(pb.background_end),
             })
         } else {
             parent.border
@@ -119,14 +168,22 @@ impl EdgeConfigInputs {
         // Build shadow config
         let has_shadow_overrides = self.shadow_blur.is_some()
             || self.shadow_expand.is_some()
-            || self.shadow_color.is_some();
+            || self.shadow_color.is_some()
+            || self.shadow_color_end.is_some()
+            || self.shadow_offset_x.is_some()
+            || self.shadow_offset_y.is_some();
 
         let shadow = if has_shadow_overrides {
             let ps = parent.shadow.unwrap_or_default();
             Some(EdgeShadow {
                 color: self.shadow_color.unwrap_or(ps.color),
+                end_color: self.shadow_color_end.unwrap_or(ps.end_color),
                 expand: self.shadow_expand.unwrap_or(ps.expand),
                 blur: self.shadow_blur.unwrap_or(ps.blur),
+                offset: (
+                    self.shadow_offset_x.unwrap_or(ps.offset.0),
+                    self.shadow_offset_y.unwrap_or(ps.offset.1),
+                ),
             })
         } else {
             parent.shadow
@@ -136,34 +193,41 @@ impl EdgeConfigInputs {
             start_color,
             end_color,
             pattern,
+            stroke_outline,
             border,
             shadow,
             curve: self.curve.or(parent.curve),
         }
     }
 
-    /// Builds the Pattern from individual inputs
+    /// Builds the Pattern from individual inputs, aligned with iced_sdf gallery.
     fn build_pattern(&self, parent: &EdgeConfig) -> Option<Pattern> {
         let pattern_type = self.pattern_type.unwrap_or(PatternType::Solid);
         let thickness = self.thickness.unwrap_or(2.0);
         let dash = self.dash_length.unwrap_or(12.0);
         let gap = self.gap_length.unwrap_or(6.0);
-        let angle = self.pattern_angle.unwrap_or(std::f32::consts::FRAC_PI_4);
+        let angle = self.pattern_angle.unwrap_or(0.0);
         let dot_radius = self.dot_radius.unwrap_or(2.0);
         let speed = self.animation_speed.unwrap_or(0.0);
 
-        let has_overrides = self.pattern_type.is_some() || self.thickness.is_some();
+        let has_overrides = self.pattern_type.is_some()
+            || self.thickness.is_some()
+            || self.dash_length.is_some()
+            || self.gap_length.is_some()
+            || self.pattern_angle.is_some()
+            || self.dot_radius.is_some()
+            || self.animation_speed.is_some();
 
-        if !has_overrides && self.pattern_type.is_none() {
+        if !has_overrides {
             return parent.pattern;
         }
 
         let mut p = match pattern_type {
             PatternType::Solid => Pattern::solid(thickness),
-            PatternType::Dashed => Pattern::dashed(thickness, dash, gap),
+            PatternType::Dashed => Pattern::dashed_angle(thickness, dash, gap, angle),
+            PatternType::DashCapped => Pattern::dash_capped_angle(thickness, dash, gap, angle),
             PatternType::Arrowed => Pattern::arrowed(thickness, dash, gap, angle),
-            PatternType::Angled => Pattern::dashed_angle(thickness, dash, gap, angle),
-            PatternType::Dotted => Pattern::dotted(gap, dot_radius),
+            PatternType::Dotted => Pattern::dotted(gap + dot_radius * 2.0, dot_radius),
             PatternType::DashDotted => Pattern::dash_dotted(thickness, dash, gap, dot_radius),
         };
 
@@ -193,568 +257,222 @@ where
     let style = NodeContentStyle::process(theme);
     let result = inputs.build();
 
-    // Config row: input left, typed output right
+    // Config in/out row
     let config_row = row![
-        pin!(
-            Left,
-            pins::config::CONFIG,
-            text("in").size(10),
-            Input,
-            pins::EdgeConfigData,
-            colors::PIN_CONFIG
-        ),
+        pin!(Left, pins::config::CONFIG, text("in").size(10), Input, pins::EdgeConfigData, colors::PIN_CONFIG),
         container(text("")).width(Length::Fill),
-        pin!(
-            Right,
-            pins::config::EDGE_OUT,
-            text("out").size(10),
-            Output,
-            pins::EdgeConfigData,
-            colors::PIN_CONFIG
-        ),
+        pin!(Right, pins::config::EDGE_OUT, text("out").size(10), Output, pins::EdgeConfigData, colors::PIN_CONFIG),
     ]
     .align_y(iced::Alignment::Center);
 
-    // Get values for display
-    let start_color = result.start_color;
-    let end_color = result.end_color;
+    let mut items: Vec<iced::Element<'_, Message>> = vec![config_row.into()];
+
+    // Precompute display values
     let thickness = result.pattern.map(|p| p.thickness);
-
-    // Start color row
-    let start_display: iced::Element<'a, Message> = if let Some(c) = start_color {
-        container(text(""))
-            .width(20)
-            .height(12)
-            .style(move |_: &_| container::Style {
-                background: Some(iced::Background::Color(c)),
-                border: iced::Border {
-                    color: colors::PIN_ANY,
-                    width: 1.0,
-                    radius: 2.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
-    } else {
-        text("--").size(9).into()
-    };
-    let start_row = row![
-        pin!(
-            Left,
-            pins::config::START,
-            text("start").size(10),
-            Input,
-            pins::ColorData,
-            colors::PIN_COLOR
-        ),
-        container(start_display)
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // End color row
-    let end_display: iced::Element<'a, Message> = if let Some(c) = end_color {
-        container(text(""))
-            .width(20)
-            .height(12)
-            .style(move |_: &_| container::Style {
-                background: Some(iced::Background::Color(c)),
-                border: iced::Border {
-                    color: colors::PIN_ANY,
-                    width: 1.0,
-                    radius: 2.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
-    } else {
-        text("--").size(9).into()
-    };
-    let end_row = row![
-        pin!(
-            Left,
-            pins::config::END,
-            text("end").size(10),
-            Input,
-            pins::ColorData,
-            colors::PIN_COLOR
-        ),
-        container(end_display)
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Thickness row
-    let thick_row = row![
-        pin!(
-            Left,
-            pins::config::THICK,
-            text("thick").size(10),
-            Input,
-            pins::Float,
-            colors::PIN_NUMBER
-        ),
-        container(text(thickness.map_or("--".to_string(), |v| format!("{:.1}", v))).size(9))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Curve type row
     let curve_label = match result.curve {
         Some(EdgeCurve::BezierCubic) => "bezier",
         Some(EdgeCurve::Line) => "line",
         None => "--",
     };
-    let curve_row = row![
-        pin!(
-            Left,
-            pins::config::CURVE,
-            text("curve").size(10),
-            Input,
-            pins::EdgeCurveData,
-            colors::PIN_ANY
-        ),
-        container(text(curve_label).size(9))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Pattern type row
     let pattern_label = match inputs.get_pattern_type() {
         PatternType::Solid => "solid",
         PatternType::Dashed => "dashed",
+        PatternType::DashCapped => "capped",
         PatternType::Arrowed => "arrowed",
-        PatternType::Angled => "angled",
         PatternType::Dotted => "dotted",
         PatternType::DashDotted => "dash-dot",
     };
-    let pattern_row = row![
-        pin!(
-            Left,
-            pins::config::PATTERN,
-            text("pattern").size(10),
-            Input,
-            pins::PatternTypeData,
-            colors::PIN_ANY
-        ),
-        container(text(pattern_label).size(9))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Dash length row
-    let dash_row = row![
-        pin!(
-            Left,
-            pins::config::DASH,
-            text("dash").size(10),
-            Input,
-            pins::Float,
-            colors::PIN_NUMBER
-        ),
-        container(
-            text(
-                inputs
-                    .dash_length
-                    .map_or("--".to_string(), |v| format!("{:.1}", v))
-            )
-            .size(9)
-        )
-        .width(Length::Fill)
-        .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Gap length row
-    let gap_row = row![
-        pin!(
-            Left,
-            pins::config::GAP,
-            text("gap").size(10),
-            Input,
-            pins::Float,
-            colors::PIN_NUMBER
-        ),
-        container(
-            text(
-                inputs
-                    .gap_length
-                    .map_or("--".to_string(), |v| format!("{:.1}", v))
-            )
-            .size(9)
-        )
-        .width(Length::Fill)
-        .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Pattern angle row
     let angle_display = inputs
         .pattern_angle
-        .map_or("--".to_string(), |v| format!("{:.0} deg", v.to_degrees()));
-    let angle_row = row![
-        pin!(
-            Left,
-            pins::config::ANGLE,
-            text("angle").size(10),
-            Input,
-            pins::Float,
-            colors::PIN_NUMBER
-        ),
-        container(text(angle_display).size(9))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
+        .map(|v| format!("{:.0} deg", v.to_degrees()))
+        .unwrap_or_else(|| "--".to_string());
 
-    // Animation speed row
-    let speed_row = row![
-        pin!(
-            Left,
-            pins::config::SPEED,
-            text("speed").size(10),
-            Input,
-            pins::Float,
-            colors::PIN_NUMBER
-        ),
-        container(
-            text(
-                inputs
-                    .animation_speed
-                    .map_or("0".to_string(), |v| format!("{:.0}", v))
-            )
-            .size(9)
-        )
-        .width(Length::Fill)
-        .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Border width row
-    let border_width_row = row![
-        pin!(
-            Left,
-            pins::config::BORDER_WIDTH,
-            text("b.width").size(10),
-            Input,
-            pins::Float,
-            colors::PIN_NUMBER
-        ),
-        container(
-            text(
-                inputs
-                    .border_width
-                    .map_or("--".to_string(), |v| format!("{:.1}", v))
-            )
-            .size(9)
-        )
-        .width(Length::Fill)
-        .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Border gap row
-    let border_gap_row = row![
-        pin!(
-            Left,
-            pins::config::BORDER_GAP,
-            text("b.gap").size(10),
-            Input,
-            pins::Float,
-            colors::PIN_NUMBER
-        ),
-        container(
-            text(
-                inputs
-                    .border_gap
-                    .map_or("--".to_string(), |v| format!("{:.1}", v))
-            )
-            .size(9)
-        )
-        .width(Length::Fill)
-        .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Border start color row
-    let border_start_display: iced::Element<'a, Message> =
-        if let Some(c) = inputs.border_start_color {
-            container(text(""))
-                .width(20)
-                .height(12)
-                .style(move |_: &_| container::Style {
-                    background: Some(iced::Background::Color(c)),
-                    border: iced::Border {
-                        color: colors::PIN_ANY,
-                        width: 1.0,
-                        radius: 2.0.into(),
-                    },
-                    ..Default::default()
-                })
-                .into()
-        } else {
-            text("--").size(9).into()
-        };
-    let border_start_row = row![
-        pin!(
-            Left,
-            pins::config::BORDER_START_COLOR,
-            text("b.start").size(10),
-            Input,
-            pins::ColorData,
-            colors::PIN_COLOR
-        ),
-        container(border_start_display)
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Border end color row
-    let border_end_display: iced::Element<'a, Message> = if let Some(c) = inputs.border_end_color {
-        container(text(""))
-            .width(20)
-            .height(12)
-            .style(move |_: &_| container::Style {
-                background: Some(iced::Background::Color(c)),
-                border: iced::Border {
-                    color: colors::PIN_ANY,
-                    width: 1.0,
-                    radius: 2.0.into(),
-                },
-                ..Default::default()
-            })
+    // --- Stroke section ---
+    push_section(
+        &mut items,
+        "Stroke",
+        sections.stroke,
+        on_toggle(EdgeSection::Stroke),
+        (!sections.stroke).then(|| {
+            collapsed_pin_row![
+                (pins::config::START, pins::ColorData, colors::PIN_COLOR),
+                (pins::config::END, pins::ColorData, colors::PIN_COLOR),
+                (pins::config::THICK, pins::Float, colors::PIN_NUMBER),
+                (pins::config::CURVE, pins::EdgeCurveData, colors::PIN_ANY),
+                (pins::config::STROKE_OL_THICK, pins::Float, colors::PIN_NUMBER),
+                (pins::config::STROKE_OL_COLOR, pins::ColorData, colors::PIN_COLOR)
+            ]
             .into()
-    } else {
-        text("--").size(9).into()
-    };
-    let border_end_row = row![
-        pin!(
-            Left,
-            pins::config::BORDER_END_COLOR,
-            text("b.end").size(10),
-            Input,
-            pins::ColorData,
-            colors::PIN_COLOR
-        ),
-        container(border_end_display)
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
+        }),
+        vec![
+            pin_row(
+                pin!(Left, pins::config::START, text("start").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                color_swatch(result.start_color),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::END, text("end").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                color_swatch(result.end_color),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::THICK, text("thick").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(fmt_float(thickness, 1)),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::CURVE, text("curve").size(10), Input, pins::EdgeCurveData, colors::PIN_ANY),
+                value_display(curve_label),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::STROKE_OL_THICK, text("s.ol.w").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(fmt_float(inputs.stroke_outline_thickness, 1)),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::STROKE_OL_COLOR, text("s.ol.c").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                color_swatch(inputs.stroke_outline_color),
+            ).into(),
+        ],
+    );
 
-    // Shadow blur row
-    let shadow_blur_row = row![
-        pin!(
-            Left,
-            pins::config::SHADOW_BLUR,
-            text("s.blur").size(10),
-            Input,
-            pins::Float,
-            colors::PIN_NUMBER
-        ),
-        container(
-            text(
-                inputs
-                    .shadow_blur
-                    .map_or("--".to_string(), |v| format!("{:.1}", v))
-            )
-            .size(9)
-        )
-        .width(Length::Fill)
-        .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Shadow expand row
-    let shadow_expand_row = row![
-        pin!(
-            Left,
-            pins::config::SHADOW_OFFSET,
-            text("s.exp").size(10),
-            Input,
-            pins::Float,
-            colors::PIN_NUMBER
-        ),
-        container(
-            text(
-                inputs
-                    .shadow_expand
-                    .map_or("--".to_string(), |v| format!("{:.1}", v))
-            )
-            .size(9)
-        )
-        .width(Length::Fill)
-        .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Shadow color row
-    let shadow_color_display: iced::Element<'a, Message> = if let Some(c) = inputs.shadow_color {
-        container(text(""))
-            .width(20)
-            .height(12)
-            .style(move |_: &_| container::Style {
-                background: Some(iced::Background::Color(c)),
-                border: iced::Border {
-                    color: colors::PIN_ANY,
-                    width: 1.0,
-                    radius: 2.0.into(),
-                },
-                ..Default::default()
-            })
+    // --- Pattern section ---
+    push_section(
+        &mut items,
+        "Pattern",
+        sections.pattern,
+        on_toggle(EdgeSection::Pattern),
+        (!sections.pattern).then(|| {
+            collapsed_pin_row![
+                (pins::config::PATTERN, pins::PatternTypeData, colors::PIN_ANY),
+                (pins::config::DASH, pins::Float, colors::PIN_NUMBER),
+                (pins::config::GAP, pins::Float, colors::PIN_NUMBER),
+                (pins::config::ANGLE, pins::Float, colors::PIN_NUMBER),
+                (pins::config::SPEED, pins::Float, colors::PIN_NUMBER)
+            ]
             .into()
-    } else {
-        text("--").size(9).into()
-    };
-    let shadow_color_row = row![
-        pin!(
-            Left,
-            pins::config::SHADOW_COLOR,
-            text("s.color").size(10),
-            Input,
-            pins::ColorData,
-            colors::PIN_COLOR
-        ),
-        container(shadow_color_display)
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Build content with collapsible sections
-    let mut content_items: Vec<iced::Element<'_, Message>> = vec![config_row.into()];
-
-    // Stroke section
-    let stroke_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.stroke {
-        Some(
-            row![
-                pin!(Left, pins::config::START, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
-                pin!(Left, pins::config::END, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
-                pin!(Left, pins::config::THICK, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::CURVE, text("").size(1), Input, pins::EdgeCurveData, colors::PIN_ANY).disable_interactions(),
-            ]
-            .spacing(2)
-            .into(),
-        )
-    } else {
-        None
-    };
-    content_items.push(
-        section_header_with_pins(
-            "Stroke",
-            sections.stroke,
-            on_toggle(EdgeSection::Stroke),
-            stroke_collapsed_pins,
-        )
-        .into(),
+        }),
+        vec![
+            pin_row(
+                pin!(Left, pins::config::PATTERN, text("pattern").size(10), Input, pins::PatternTypeData, colors::PIN_ANY),
+                value_display(pattern_label),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::DASH, text("dash").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(fmt_float(inputs.dash_length, 1)),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::GAP, text("gap").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(fmt_float(inputs.gap_length, 1)),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::ANGLE, text("angle").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(angle_display),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::SPEED, text("speed").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(fmt_float(inputs.animation_speed, 0)),
+            ).into(),
+        ],
     );
-    if sections.stroke {
-        content_items.push(start_row.into());
-        content_items.push(end_row.into());
-        content_items.push(thick_row.into());
-        content_items.push(curve_row.into());
-    }
 
-    // Pattern section
-    let pattern_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.pattern {
-        Some(
-            row![
-                pin!(Left, pins::config::PATTERN, text("").size(1), Input, pins::PatternTypeData, colors::PIN_ANY).disable_interactions(),
-                pin!(Left, pins::config::DASH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::GAP, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::ANGLE, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::SPEED, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+    // --- Border section ---
+    push_section(
+        &mut items,
+        "Border",
+        sections.border,
+        on_toggle(EdgeSection::Border),
+        (!sections.border).then(|| {
+            collapsed_pin_row![
+                (pins::config::BORDER_WIDTH, pins::Float, colors::PIN_NUMBER),
+                (pins::config::BORDER_GAP, pins::Float, colors::PIN_NUMBER),
+                (pins::config::BORDER_START_COLOR, pins::ColorData, colors::PIN_COLOR),
+                (pins::config::BORDER_END_COLOR, pins::ColorData, colors::PIN_COLOR),
+                (pins::config::BORDER_BG, pins::ColorData, colors::PIN_COLOR),
+                (pins::config::BORDER_BG_END, pins::ColorData, colors::PIN_COLOR),
+                (pins::config::BORDER_OL_THICK, pins::Float, colors::PIN_NUMBER),
+                (pins::config::BORDER_OL_COLOR, pins::ColorData, colors::PIN_COLOR)
             ]
-            .spacing(2)
-            .into(),
-        )
-    } else {
-        None
-    };
-    content_items.push(
-        section_header_with_pins(
-            "Pattern",
-            sections.pattern,
-            on_toggle(EdgeSection::Pattern),
-            pattern_collapsed_pins,
-        )
-        .into(),
+            .into()
+        }),
+        vec![
+            pin_row(
+                pin!(Left, pins::config::BORDER_WIDTH, text("b.thick").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(fmt_float(inputs.border_thickness, 1)),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::BORDER_GAP, text("b.gap").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(fmt_float(inputs.border_gap, 1)),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::BORDER_START_COLOR, text("b.start").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                color_swatch(inputs.border_color),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::BORDER_END_COLOR, text("b.end").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                color_swatch(inputs.border_color_end),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::BORDER_BG, text("b.bg").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                color_swatch(inputs.border_background),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::BORDER_BG_END, text("b.bge").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                color_swatch(inputs.border_background_end),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::BORDER_OL_THICK, text("bo.w").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(fmt_float(inputs.border_outline_thickness, 1)),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::BORDER_OL_COLOR, text("bo.c").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                color_swatch(inputs.border_outline_color),
+            ).into(),
+        ],
     );
-    if sections.pattern {
-        content_items.push(pattern_row.into());
-        content_items.push(dash_row.into());
-        content_items.push(gap_row.into());
-        content_items.push(angle_row.into());
-        content_items.push(speed_row.into());
-    }
 
-    // Border section
-    let border_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.border {
-        Some(
-            row![
-                pin!(Left, pins::config::BORDER_WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::BORDER_GAP, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::BORDER_START_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
-                pin!(Left, pins::config::BORDER_END_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+    // --- Shadow section ---
+    push_section(
+        &mut items,
+        "Shadow",
+        sections.shadow,
+        on_toggle(EdgeSection::Shadow),
+        (!sections.shadow).then(|| {
+            collapsed_pin_row![
+                (pins::config::SHADOW_BLUR, pins::Float, colors::PIN_NUMBER),
+                (pins::config::SHADOW_EXPAND, pins::Float, colors::PIN_NUMBER),
+                (pins::config::SHADOW_COLOR, pins::ColorData, colors::PIN_COLOR),
+                (pins::config::SHADOW_END_COLOR, pins::ColorData, colors::PIN_COLOR),
+                (pins::config::SHADOW_OFFSET_X, pins::Float, colors::PIN_NUMBER),
+                (pins::config::SHADOW_OFFSET_Y, pins::Float, colors::PIN_NUMBER)
             ]
-            .spacing(2)
-            .into(),
-        )
-    } else {
-        None
-    };
-    content_items.push(
-        section_header_with_pins(
-            "Border",
-            sections.border,
-            on_toggle(EdgeSection::Border),
-            border_collapsed_pins,
-        )
-        .into(),
+            .into()
+        }),
+        vec![
+            pin_row(
+                pin!(Left, pins::config::SHADOW_BLUR, text("s.blur").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(fmt_float(inputs.shadow_blur, 1)),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::SHADOW_EXPAND, text("s.exp").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(fmt_float(inputs.shadow_expand, 1)),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::SHADOW_COLOR, text("s.color").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                color_swatch(inputs.shadow_color),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::SHADOW_END_COLOR, text("s.cend").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                color_swatch(inputs.shadow_color_end),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::SHADOW_OFFSET_X, text("s.off.x").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(fmt_float(inputs.shadow_offset_x, 1)),
+            ).into(),
+            pin_row(
+                pin!(Left, pins::config::SHADOW_OFFSET_Y, text("s.off.y").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                value_display(fmt_float(inputs.shadow_offset_y, 1)),
+            ).into(),
+        ],
     );
-    if sections.border {
-        content_items.push(border_width_row.into());
-        content_items.push(border_gap_row.into());
-        content_items.push(border_start_row.into());
-        content_items.push(border_end_row.into());
-    }
 
-    // Shadow section
-    let shadow_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.shadow {
-        Some(
-            row![
-                pin!(Left, pins::config::SHADOW_BLUR, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::SHADOW_OFFSET, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::SHADOW_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
-            ]
-            .spacing(2)
-            .into(),
-        )
-    } else {
-        None
-    };
-    content_items.push(
-        section_header_with_pins(
-            "Shadow",
-            sections.shadow,
-            on_toggle(EdgeSection::Shadow),
-            shadow_collapsed_pins,
-        )
-        .into(),
-    );
-    if sections.shadow {
-        content_items.push(shadow_blur_row.into());
-        content_items.push(shadow_expand_row.into());
-        content_items.push(shadow_color_row.into());
-    }
-
-    let content = iced::widget::Column::with_children(content_items).spacing(4);
+    let content = iced::widget::Column::with_children(items).spacing(4);
 
     column![
         node_title_bar("Edge Config", style),

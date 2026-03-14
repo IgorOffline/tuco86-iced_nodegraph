@@ -39,6 +39,17 @@ use iced_widget::core::{
     widget::{Tree, tree},
 };
 use std::any::TypeId;
+use std::hash::{Hash, Hasher};
+
+/// Default pin size when no content widget is provided.
+const DEFAULT_PIN_SIZE: Size = Size::new(50.0, 20.0);
+
+/// Compute a stable hash for a pin ID (used for pin identity tracking).
+fn hash_pin_id<P: Hash>(pin_id: &P) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    pin_id.hash(&mut hasher);
+    hasher.finish()
+}
 
 /// A reference to a specific pin on a specific node.
 ///
@@ -79,15 +90,21 @@ impl From<PinReference> for crate::node_graph::PinRef<usize, usize> {
     }
 }
 
-/// An edge to attach a `NodePinWidget` to.
+/// Which side of a node this pin attaches to.
+/// Determines the tangent direction for edge bezier curves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u32)]
 pub enum PinSide {
+    /// Pin on the left edge, edges exit to the left.
     #[default]
     Left = 0,
+    /// Pin on the right edge, edges exit to the right.
     Right = 1,
+    /// Pin on the top edge, edges exit upward.
     Top = 2,
+    /// Pin on the bottom edge, edges exit downward.
     Bottom = 3,
+    /// Pin placed in a row layout. Edges exit to the right (same as `Right`).
     Row = 4,
 }
 
@@ -236,12 +253,8 @@ where
     }
 
     fn state(&self) -> tree::State {
-        use std::hash::Hasher;
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        std::hash::Hash::hash(&self.pin_id, &mut hasher);
-
         tree::State::new(NodePinState {
-            pin_id_hash: hasher.finish(),
+            pin_id_hash: hash_pin_id(&self.pin_id),
             pin_id: AnyPinId::new(self.pin_id.clone()),
             side: self.side,
             direction: self.direction,
@@ -274,7 +287,7 @@ where
             let size = content_layout.size();
             layout::Node::with_children(size, vec![content_layout])
         } else {
-            layout::Node::new(Size::new(50.0, 20.0)) // Default pin size
+            layout::Node::new(DEFAULT_PIN_SIZE)
         }
     }
 
@@ -290,12 +303,8 @@ where
         viewport: &Rectangle,
     ) {
         {
-            use std::hash::Hasher;
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            std::hash::Hash::hash(&self.pin_id, &mut hasher);
-
             let state = tree.state.downcast_mut::<NodePinState>();
-            state.pin_id_hash = hasher.finish();
+            state.pin_id_hash = hash_pin_id(&self.pin_id);
             state.pin_id = AnyPinId::new(self.pin_id.clone());
             state.side = self.side;
             state.direction = self.direction;

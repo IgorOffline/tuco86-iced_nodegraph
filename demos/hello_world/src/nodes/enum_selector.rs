@@ -238,20 +238,20 @@ where
     ]
     .spacing(4);
 
-    // Second row: Arrowed (///), Angled (dashed with angled caps)
+    // Second row: DashCapped (round caps), Arrowed (///)
     let pills_row2 = row![
+        pill_button(
+            "Capped",
+            PatternType::DashCapped,
+            selected,
+            on_change3(PatternType::DashCapped),
+            accent
+        ),
         pill_button(
             "Arrowed",
             PatternType::Arrowed,
             selected,
-            on_change3(PatternType::Arrowed),
-            accent
-        ),
-        pill_button(
-            "Angled",
-            PatternType::Angled,
-            selected,
-            on_change4(PatternType::Angled),
+            on_change4(PatternType::Arrowed),
             accent
         ),
     ]

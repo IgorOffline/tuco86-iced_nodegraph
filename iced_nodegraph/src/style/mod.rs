@@ -15,6 +15,7 @@
 
 use iced::{Color, Theme};
 use iced_sdf::Pattern;
+use std::borrow::Cow;
 
 mod config;
 
@@ -697,9 +698,11 @@ impl NodeStyle {
     }
 
     /// Returns a modified style for the given status.
-    pub fn for_status(&self, status: NodeStatus, selection: &SelectionStyle) -> Self {
+    /// Returns a borrowed reference for idle nodes (zero-cost) and an owned
+    /// modified copy only for selected nodes.
+    pub fn for_status(&self, status: NodeStatus, selection: &SelectionStyle) -> Cow<'_, Self> {
         match status {
-            NodeStatus::Idle => self.clone(),
+            NodeStatus::Idle => Cow::Borrowed(self),
             NodeStatus::Selected => {
                 let mut s = self.clone();
                 s.border = Some(
@@ -708,7 +711,7 @@ impl NodeStyle {
                         .color(selection.selected_border_color)
                         .width(selection.selected_border_width),
                 );
-                s
+                Cow::Owned(s)
             }
         }
     }
@@ -737,18 +740,24 @@ pub enum EdgeCurve {
 pub struct EdgeShadow {
     /// Shadow color (typically semi-transparent).
     pub color: Color,
+    /// Gradient end color for shadow (defaults to same as `color`).
+    pub end_color: Color,
     /// Expand the shadow beyond the stroke.
     pub expand: f32,
     /// Blur radius in world-space pixels.
     pub blur: f32,
+    /// Shadow offset in world-space pixels (x, y).
+    pub offset: (f32, f32),
 }
 
 impl Default for EdgeShadow {
     fn default() -> Self {
         Self {
             color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+            end_color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
             expand: 4.0,
             blur: 4.0,
+            offset: (0.0, 0.0),
         }
     }
 }
@@ -763,6 +772,18 @@ impl EdgeShadow {
         self
     }
 
+    pub fn end_color(mut self, color: Color) -> Self {
+        self.end_color = color;
+        self
+    }
+
+    /// Sets both start and end color to the same value.
+    pub fn solid_color(mut self, color: Color) -> Self {
+        self.color = color;
+        self.end_color = color;
+        self
+    }
+
     pub fn expand(mut self, expand: f32) -> Self {
         self.expand = expand;
         self
@@ -773,27 +794,41 @@ impl EdgeShadow {
         self
     }
 
+    pub fn offset(mut self, x: f32, y: f32) -> Self {
+        self.offset = (x, y);
+        self
+    }
+
     pub fn subtle() -> Self {
+        let c = Color::from_rgba(0.0, 0.0, 0.0, 0.15);
         Self {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.15),
+            color: c,
+            end_color: c,
             expand: 2.0,
             blur: 2.0,
+            offset: (0.0, 0.0),
         }
     }
 
     pub fn strong() -> Self {
+        let c = Color::from_rgba(0.0, 0.0, 0.0, 0.5);
         Self {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+            color: c,
+            end_color: c,
             expand: 8.0,
             blur: 8.0,
+            offset: (0.0, 0.0),
         }
     }
 
     pub fn glow(color: Color) -> Self {
+        let c = Color::from_rgba(color.r, color.g, color.b, 0.4);
         Self {
-            color: Color::from_rgba(color.r, color.g, color.b, 0.4),
+            color: c,
+            end_color: c,
             expand: 6.0,
             blur: 6.0,
+            offset: (0.0, 0.0),
         }
     }
 }
@@ -815,6 +850,10 @@ pub struct EdgeBorder {
     pub gap: f32,
     /// Optional outline: (width, color).
     pub outline: Option<(f32, Color)>,
+    /// Background fill color for the border gap area.
+    pub background: Color,
+    /// Gradient end color for border background.
+    pub background_end: Color,
 }
 
 impl Default for EdgeBorder {
@@ -825,6 +864,8 @@ impl Default for EdgeBorder {
             width: 1.0,
             gap: 0.5,
             outline: None,
+            background: Color::TRANSPARENT,
+            background_end: Color::TRANSPARENT,
         }
     }
 }
@@ -864,6 +905,18 @@ impl EdgeBorder {
         self.outline = Some((width, color));
         self
     }
+
+    pub fn background(mut self, color: Color) -> Self {
+        self.background = color;
+        self.background_end = color;
+        self
+    }
+
+    pub fn background_gradient(mut self, start: Color, end: Color) -> Self {
+        self.background = start;
+        self.background_end = end;
+        self
+    }
 }
 
 // ============================================================================
@@ -895,6 +948,8 @@ pub struct EdgeStyle {
     pub end_color: Color,
     /// Stroke pattern (includes thickness, dash/gap, flow).
     pub pattern: Pattern,
+    /// Optional outline on the stroke layer: (width, color).
+    pub stroke_outline: Option<(f32, Color)>,
     /// Optional border ring around stroke.
     pub border: Option<EdgeBorder>,
     /// Optional shadow behind edge.
@@ -909,6 +964,7 @@ impl Default for EdgeStyle {
             start_color: Color::TRANSPARENT,
             end_color: Color::TRANSPARENT,
             pattern: Pattern::solid(2.0),
+            stroke_outline: None,
             border: None,
             shadow: None,
             curve: EdgeCurve::default(),
@@ -969,6 +1025,16 @@ impl EdgeStyle {
         self.width(thickness)
     }
 
+    pub fn stroke_outline(mut self, width: f32, color: Color) -> Self {
+        self.stroke_outline = Some((width, color));
+        self
+    }
+
+    pub fn no_stroke_outline(mut self) -> Self {
+        self.stroke_outline = None;
+        self
+    }
+
     pub fn border(mut self, border: EdgeBorder) -> Self {
         self.border = Some(border);
         self
@@ -1002,6 +1068,7 @@ impl EdgeStyle {
             start_color: Color::from_rgb(0.3, 0.6, 1.0),
             end_color: Color::from_rgb(0.3, 0.6, 1.0),
             pattern: Pattern::solid(2.5),
+            stroke_outline: None,
             border: None,
             shadow: None,
             curve: EdgeCurve::BezierCubic,
@@ -1015,6 +1082,7 @@ impl EdgeStyle {
             start_color: color,
             end_color: color,
             pattern: Pattern::dashed(2.0, 6.0, 4.0).flow(30.0),
+            stroke_outline: None,
             border: Some(EdgeBorder::new().width(1.0).gap(0.5).color(color)),
             shadow: None,
             curve: EdgeCurve::BezierCubic,
@@ -1028,6 +1096,7 @@ impl EdgeStyle {
             start_color: color,
             end_color: color,
             pattern: Pattern::dashed(1.5, 12.0, 6.0),
+            stroke_outline: None,
             border: None,
             shadow: None,
             curve: EdgeCurve::BezierCubic,
@@ -1041,6 +1110,7 @@ impl EdgeStyle {
             start_color: color,
             end_color: color,
             pattern: Pattern::solid(3.0),
+            stroke_outline: None,
             border: Some(
                 EdgeBorder::new()
                     .width(2.0)
@@ -1058,6 +1128,7 @@ impl EdgeStyle {
             start_color: Color::from_rgb(0.0, 1.0, 1.0),
             end_color: Color::from_rgb(0.0, 1.0, 1.0),
             pattern: Pattern::dotted(8.0, 2.0),
+            stroke_outline: None,
             border: None,
             shadow: None,
             curve: EdgeCurve::Line,
@@ -1100,6 +1171,7 @@ impl EdgeStyle {
             start_color: config.start_color.unwrap_or(self.start_color),
             end_color: config.end_color.unwrap_or(self.end_color),
             pattern: config.pattern.unwrap_or(self.pattern),
+            stroke_outline: config.stroke_outline.or(self.stroke_outline),
             border: config.border.or(self.border),
             shadow: config.shadow.or(self.shadow),
             curve: config.curve.unwrap_or(self.curve),
@@ -1107,6 +1179,10 @@ impl EdgeStyle {
     }
 
     /// Creates an edge style derived from an iced Theme.
+    ///
+    /// Currently returns the default style regardless of theme.
+    /// The parameter is retained for API consistency with `NodeStyle::from_theme()`
+    /// and to allow theme-aware edge styling in the future.
     pub fn from_theme(_theme: &Theme) -> Self {
         Self::new()
     }
@@ -1339,7 +1415,9 @@ impl SelectionStyle {
 // ============================================================================
 
 /// Calculates relative luminance of a color using WCAG 2.0 formula.
+/// See: <https://www.w3.org/TR/WCAG20/#relativeluminancedef>
 pub fn relative_luminance(color: Color) -> f32 {
+    // sRGB to linear conversion per WCAG 2.0 spec
     fn srgb_to_linear(c: f32) -> f32 {
         if c <= 0.03928 {
             c / 12.92

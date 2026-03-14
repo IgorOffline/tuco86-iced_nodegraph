@@ -186,6 +186,28 @@ pub mod config {
     /// Outline border outer toggle (at border outer edge)
     pub const OUTLINE_BORDER_OUTER: &str = "ol.bo";
 
+    // === Stroke Outline Config Pins ===
+
+    /// Stroke outline thickness input pin
+    pub const STROKE_OL_THICK: &str = "so.w";
+
+    /// Stroke outline color input pin
+    pub const STROKE_OL_COLOR: &str = "so.c";
+
+    // === Border Background Config Pins ===
+
+    /// Border background color input pin
+    pub const BORDER_BG: &str = "b.bg";
+
+    /// Border background end color input pin
+    pub const BORDER_BG_END: &str = "b.bge";
+
+    /// Border outline thickness input pin
+    pub const BORDER_OL_THICK: &str = "bo.w";
+
+    /// Border outline color input pin
+    pub const BORDER_OL_COLOR: &str = "bo.c";
+
     // === Shadow Config Pins ===
 
     /// Shadow toggle input pin
@@ -194,17 +216,23 @@ pub mod config {
     /// Shadow blur input pin
     pub const SHADOW_BLUR: &str = "s.blur";
 
+    /// Shadow expand input pin
+    pub const SHADOW_EXPAND: &str = "s.exp";
+
     /// Shadow offset input pin (combined, sets both x and y)
     pub const SHADOW_OFFSET: &str = "s.offs";
 
-    /// Shadow offset X input pin (for ShadowConfig node)
+    /// Shadow offset X input pin (for ShadowConfig node and edge shadow)
     pub const SHADOW_OFFSET_X: &str = "off_x";
 
-    /// Shadow offset Y input pin (for ShadowConfig node)
+    /// Shadow offset Y input pin (for ShadowConfig node and edge shadow)
     pub const SHADOW_OFFSET_Y: &str = "off_y";
 
     /// Shadow color input pin
     pub const SHADOW_COLOR: &str = "s.color";
+
+    /// Shadow end color input pin
+    pub const SHADOW_END_COLOR: &str = "s.cend";
 
     // === Node Config Pins ===
 

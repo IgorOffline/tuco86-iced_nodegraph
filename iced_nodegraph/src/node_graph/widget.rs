@@ -42,6 +42,13 @@ use iced::Color;
 // Click detection threshold (in world-space pixels)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
 
+/// Length of bezier control point segments (in world-space pixels).
+/// Controls how far control points extend from pins along their tangent direction.
+const BEZIER_SEGMENT_LENGTH: f32 = 80.0;
+
+/// Line width for the edge cutting overlay (in world-space pixels).
+const EDGE_CUT_LINE_WIDTH: f32 = 3.0;
+
 /// Apply opacity to a color by multiplying its alpha channel.
 fn color_with_opacity(c: Color, opacity: f32) -> Color {
     Color { a: c.a * opacity, ..c }
@@ -104,11 +111,10 @@ fn edge_sdf(
         crate::style::EdgeCurve::Line => Sdf::line(p0, p1),
         _ => {
             // Bezier: compute control points from pin tangent directions
-            let seg_len = 80.0_f32;
             let dir_from = pin_side_direction(start_side);
             let dir_to = pin_side_direction(end_side);
-            let cp0 = [p0[0] + dir_from[0] * seg_len, p0[1] + dir_from[1] * seg_len];
-            let cp1 = [p1[0] + dir_to[0] * seg_len, p1[1] + dir_to[1] * seg_len];
+            let cp0 = [p0[0] + dir_from[0] * BEZIER_SEGMENT_LENGTH, p0[1] + dir_from[1] * BEZIER_SEGMENT_LENGTH];
+            let cp1 = [p1[0] + dir_to[0] * BEZIER_SEGMENT_LENGTH, p1[1] + dir_to[1] * BEZIER_SEGMENT_LENGTH];
             Sdf::bezier(p0, cp0, cp1, p1)
         }
     }
@@ -124,7 +130,6 @@ fn edge_screen_bounds(
     style: &crate::style::EdgeStyle,
     ctx: &RenderContext,
 ) -> [f32; 4] {
-    let seg_len = 80.0_f32;
     let dir_from = pin_side_direction(start_side);
     let dir_to = pin_side_direction(end_side);
 
@@ -137,10 +142,10 @@ fn edge_screen_bounds(
             start.y.max(end.y),
         ),
         _ => {
-            let cp0x = start.x + dir_from[0] * seg_len;
-            let cp0y = start.y + dir_from[1] * seg_len;
-            let cp1x = end.x + dir_to[0] * seg_len;
-            let cp1y = end.y + dir_to[1] * seg_len;
+            let cp0x = start.x + dir_from[0] * BEZIER_SEGMENT_LENGTH;
+            let cp0y = start.y + dir_from[1] * BEZIER_SEGMENT_LENGTH;
+            let cp1x = end.x + dir_to[0] * BEZIER_SEGMENT_LENGTH;
+            let cp1y = end.y + dir_to[1] * BEZIER_SEGMENT_LENGTH;
             (
                 start.x.min(end.x).min(cp0x).min(cp1x),
                 start.y.min(end.y).min(cp0y).min(cp1y),
@@ -152,6 +157,10 @@ fn edge_screen_bounds(
 
     // Compute total padding from style layers
     let stroke_width = style.pattern.thickness;
+    let stroke_outline_extend = style
+        .stroke_outline
+        .map(|(w, _)| w)
+        .unwrap_or(0.0);
     let border_extend = style
         .border
         .as_ref()
@@ -162,14 +171,19 @@ fn edge_screen_bounds(
         .as_ref()
         .map(|s| s.blur + s.expand)
         .unwrap_or(0.0);
-    let padding = stroke_width + border_extend + shadow_extend
+    let shadow_offset = style
+        .shadow
+        .as_ref()
+        .map(|s| s.offset)
+        .unwrap_or((0.0, 0.0));
+    let padding = stroke_width + stroke_outline_extend + border_extend + shadow_extend
         + 4.0 / ctx.camera_zoom;
 
     world_bbox_to_screen_bounds(
-        min_x - padding,
-        min_y - padding,
-        max_x + padding,
-        max_y + padding,
+        min_x - padding + shadow_offset.0.min(0.0),
+        min_y - padding + shadow_offset.1.min(0.0),
+        max_x + padding + shadow_offset.0.max(0.0),
+        max_y + padding + shadow_offset.1.max(0.0),
         0.0,
         ctx,
     )
@@ -204,20 +218,40 @@ fn edge_sdf_layers(
 
     // Shadow layer (behind everything)
     if let Some(shadow) = &style.shadow
-        && shadow.color.a > 0.0
+        && (shadow.color.a > 0.0 || shadow.end_color.a > 0.0)
     {
-        layers.push(
-            Layer::solid(shadow.color)
-                .expand(shadow.expand)
-                .blur(shadow.blur),
-        );
+        let mut layer = Layer::gradient_u(shadow.color, shadow.end_color)
+            .gradient_scale(gradient_scale)
+            .expand(shadow.expand)
+            .blur(shadow.blur);
+        if shadow.offset != (0.0, 0.0) {
+            layer = layer.offset(shadow.offset.0, shadow.offset.1);
+        }
+        layers.push(layer);
     }
 
-    // Border layer (behind stroke)
+    // Border layers (behind stroke)
     if let Some(border) = &style.border
         && border.width > 0.0
     {
-        let total_width = style.pattern.thickness + border.gap + border.width;
+        let border_center = style.pattern.thickness * 0.5 + border.gap + border.width * 0.5;
+        let border_outer = border_center + border.width * 0.5;
+
+        // Border background fill (gap area)
+        if border.background.a > 0.0 || border.background_end.a > 0.0 {
+            let (bg0, bg1) = if is_reversed {
+                (border.background_end, border.background)
+            } else {
+                (border.background, border.background_end)
+            };
+            layers.push(
+                Layer::gradient_u(bg0, bg1)
+                    .gradient_scale(gradient_scale)
+                    .expand(border_outer),
+            );
+        }
+
+        // Border stroke
         let border_start = resolve_edge_color(border.start_color, start_pin_color);
         let border_end = resolve_edge_color(border.end_color, end_pin_color);
         let (c0, c1) = if is_reversed {
@@ -227,7 +261,8 @@ fn edge_sdf_layers(
         };
         let mut layer = Layer::gradient_u(c0, c1)
             .gradient_scale(gradient_scale)
-            .with_pattern(Pattern::solid(total_width));
+            .with_pattern(Pattern::solid(border.width))
+            .expand(border_center);
         if let Some((w, c)) = border.outline {
             layer = layer.outline(w, c);
         }
@@ -252,11 +287,13 @@ fn edge_sdf_layers(
         style.pattern
     };
 
-    layers.push(
-        Layer::gradient_u(c0, c1)
-            .gradient_scale(gradient_scale)
-            .with_pattern(pattern),
-    );
+    let mut stroke_layer = Layer::gradient_u(c0, c1)
+        .gradient_scale(gradient_scale)
+        .with_pattern(pattern);
+    if let Some((w, c)) = style.stroke_outline {
+        stroke_layer = stroke_layer.outline(w, c);
+    }
+    layers.push(stroke_layer);
 
     layers
 }
@@ -481,22 +518,22 @@ where
 
             // Single node drag
             if let (Dragging::Node(drag_idx, origin), Some(cursor_pos)) =
-                (state.dragging.clone(), cursor.position())
-                && drag_idx == node_idx {
+                (&state.dragging, cursor.position())
+                && *drag_idx == node_idx {
                     let cursor_world: WorldPoint = camera
                         .screen_to_world()
                         .transform_point(cursor_pos.into_euclid());
-                    offset = cursor_world - origin;
+                    offset = cursor_world - *origin;
                 }
 
             // Group move
             if let (Dragging::GroupMove(origin), Some(cursor_pos)) =
-                (state.dragging.clone(), cursor.position())
+                (&state.dragging, cursor.position())
                 && is_selected {
                     let cursor_world: WorldPoint = camera
                         .screen_to_world()
                         .transform_point(cursor_pos.into_euclid());
-                    offset = cursor_world - origin;
+                    offset = cursor_world - *origin;
                 }
 
             offset
@@ -632,8 +669,9 @@ where
                         .transform_point(cursor_pos.into_euclid());
 
                     // Use global edge_defaults if set, otherwise fall back to EdgeConfig::default()
-                    let drag_edge_config = self.edge_defaults.clone().unwrap_or_default();
-                    let drag_edge_style = resolve_edge_style(&drag_edge_config, theme);
+                    let default_edge_config = EdgeConfig::default();
+                    let drag_edge_config = self.edge_defaults.as_ref().unwrap_or(&default_edge_config);
+                    let drag_edge_style = resolve_edge_style(drag_edge_config, theme);
 
                     // Compute opposite side for end
                     let end_side: u32 = match from_pin_state.side {
@@ -706,22 +744,22 @@ where
 
                 // Single node drag
                 if let (Dragging::Node(drag_idx, origin), Some(cursor_pos)) =
-                    (state.dragging.clone(), cursor.position())
-                    && drag_idx == node_index {
+                    (&state.dragging, cursor.position())
+                    && *drag_idx == node_index {
                         let cursor_world: WorldPoint = camera
                             .screen_to_world()
                             .transform_point(cursor_pos.into_euclid());
-                        offset = cursor_world - origin;
+                        offset = cursor_world - *origin;
                     }
 
                 // Group move
                 if let (Dragging::GroupMove(origin), Some(cursor_pos)) =
-                    (state.dragging.clone(), cursor.position())
+                    (&state.dragging, cursor.position())
                     && is_selected {
                         let cursor_world: WorldPoint = camera
                             .screen_to_world()
                             .transform_point(cursor_pos.into_euclid());
-                        offset = cursor_world - origin;
+                        offset = cursor_world - *origin;
                     }
 
                 offset
@@ -737,7 +775,7 @@ where
             // Resolve base style from config, then apply style_fn for status-based modifications
             let base_style = resolve_node_style(node_style, theme);
             let resolved = if let Some(ref style_fn) = self.node_style_fn {
-                style_fn(theme, node_status, base_style)
+                std::borrow::Cow::Owned(style_fn(theme, node_status, base_style))
             } else {
                 // Fallback: apply selection styling from graph style
                 base_style.for_status(node_status, selection_style)
@@ -1031,18 +1069,17 @@ where
                 resolved_graph.selection_style.edge_cutting_color
             };
 
-            let line_width = 3.0;
             let cutting_primitive = SdfPrimitive::new(Sdf::line(
                 [start.x, start.y],
                 [cursor_world.x, cursor_world.y],
             ))
-            .layers(vec![Layer::stroke(cutting_color, Pattern::solid(line_width))])
+            .layers(vec![Layer::stroke(cutting_color, Pattern::solid(EDGE_CUT_LINE_WIDTH))])
             .screen_bounds(world_bbox_to_screen_bounds(
                 start.x,
                 start.y,
                 cursor_world.x,
                 cursor_world.y,
-                line_width + 2.0 / render_context.camera_zoom,
+                EDGE_CUT_LINE_WIDTH + 2.0 / render_context.camera_zoom,
                 &render_context,
             ))
             .camera(
@@ -1333,17 +1370,16 @@ where
                                         if let (Some((p0, from_side)), Some((p3, to_side))) =
                                             (from_pin_data, to_pin_data)
                                         {
-                                            // Calculate bezier control points (same as shader)
-                                            let seg_len = 80.0;
+                                            // Calculate bezier control points
                                             let dir_from = pin_side_to_direction(from_side);
                                             let dir_to = pin_side_to_direction(to_side);
                                             let p1 = Point::new(
-                                                p0.x + dir_from.0 * seg_len,
-                                                p0.y + dir_from.1 * seg_len,
+                                                p0.x + dir_from.0 * BEZIER_SEGMENT_LENGTH,
+                                                p0.y + dir_from.1 * BEZIER_SEGMENT_LENGTH,
                                             );
                                             let p2 = Point::new(
-                                                p3.x + dir_to.0 * seg_len,
-                                                p3.y + dir_to.1 * seg_len,
+                                                p3.x + dir_to.0 * BEZIER_SEGMENT_LENGTH,
+                                                p3.y + dir_to.1 * BEZIER_SEGMENT_LENGTH,
                                             );
 
                                             // Check if cutting line intersects this bezier edge
@@ -1366,9 +1402,6 @@ where
                         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                             // Delete all pending edges on release
                             if let Dragging::EdgeCutting { pending_cuts, .. } = &state.dragging {
-                                #[cfg(debug_assertions)]
-                                println!("Edge cutting complete: {} edges cut", pending_cuts.len());
-
                                 for &edge_idx in pending_cuts.iter() {
                                     if let Some((from_ref, to_ref, _)) = self.edges.get(edge_idx) {
                                         // Edges already store user IDs (PinRef<N, P>)

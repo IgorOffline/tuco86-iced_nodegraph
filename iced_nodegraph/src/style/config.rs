@@ -125,11 +125,6 @@ impl ShadowConfig {
         self
     }
 
-    /// Alias for `blur` to maintain compatibility with code using `blur_radius`.
-    pub fn blur_radius(self, radius: f32) -> Self {
-        self.blur(radius)
-    }
-
     pub fn color(mut self, color: impl Into<Color>) -> Self {
         self.color = Some(color.into());
         self
@@ -171,6 +166,8 @@ pub struct EdgeConfig {
     pub end_color: Option<Color>,
     /// Stroke pattern (includes thickness, dash/gap, flow).
     pub pattern: Option<Pattern>,
+    /// Optional outline on the stroke layer: (width, color).
+    pub stroke_outline: Option<(f32, Color)>,
     /// Optional border ring around stroke.
     pub border: Option<EdgeBorder>,
     /// Optional shadow behind edge.
@@ -219,6 +216,11 @@ impl EdgeConfig {
         self.width(thickness)
     }
 
+    pub fn stroke_outline(mut self, width: f32, color: Color) -> Self {
+        self.stroke_outline = Some((width, color));
+        self
+    }
+
     pub fn border(mut self, border: EdgeBorder) -> Self {
         self.border = Some(border);
         self
@@ -248,6 +250,7 @@ impl EdgeConfig {
         self.start_color.is_some()
             || self.end_color.is_some()
             || self.pattern.is_some()
+            || self.stroke_outline.is_some()
             || self.border.is_some()
             || self.shadow.is_some()
             || self.curve.is_some()
@@ -259,6 +262,7 @@ impl EdgeConfig {
             start_color: self.start_color.or(other.start_color),
             end_color: self.end_color.or(other.end_color),
             pattern: self.pattern.or(other.pattern),
+            stroke_outline: self.stroke_outline.or(other.stroke_outline),
             border: self.border.or(other.border),
             shadow: self.shadow.or(other.shadow),
             curve: self.curve.or(other.curve),
@@ -463,6 +467,7 @@ impl From<super::EdgeStyle> for EdgeConfig {
             start_color: Some(style.start_color),
             end_color: Some(style.end_color),
             pattern: Some(style.pattern),
+            stroke_outline: style.stroke_outline,
             border: style.border,
             shadow: style.shadow,
             curve: Some(style.curve),

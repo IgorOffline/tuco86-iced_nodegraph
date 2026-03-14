@@ -236,8 +236,9 @@ pub use style::{
     theme_name,
 };
 
-// Re-export iced_sdf::Pattern for downstream crates
+// Re-export iced_sdf pattern types for downstream crates
 pub use iced_sdf::Pattern;
+pub use iced_sdf::pattern::PatternType as SdfPatternType;
 
 pub mod content;
 pub mod helpers;

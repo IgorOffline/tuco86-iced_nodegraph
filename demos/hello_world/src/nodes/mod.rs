@@ -34,8 +34,9 @@ pub use int_slider::{IntSliderConfig, int_slider_node};
 pub use math::math_node;
 
 use iced::{
-    Color, Length, Padding, Theme,
-    widget::{Container, container, text},
+    Color, Element, Length, Padding, Theme,
+    alignment::Horizontal,
+    widget::{Container, Row, container, row, text},
 };
 use iced_nodegraph::{
     EdgeConfig, EdgeCurve, NodeConfig, NodeContentStyle, PinConfig, PinShape, ShadowConfig,
@@ -524,4 +525,88 @@ pub fn section_header_with_pins<'a, Message: Clone + 'a>(
                 snap: false,
             }
         })
+}
+
+// ============================================================================
+// Shared helpers for config node UI (used by edge_config, node_config, etc.)
+// ============================================================================
+
+/// Renders an `Option<Color>` as a small colored swatch or "--" placeholder.
+pub fn color_swatch<'a, Message: 'a>(color: Option<Color>) -> Element<'a, Message, Theme, iced::Renderer> {
+    if let Some(c) = color {
+        container(text(""))
+            .width(20)
+            .height(12)
+            .style(move |_: &_| container::Style {
+                background: Some(iced::Background::Color(c)),
+                border: iced::Border {
+                    color: colors::PIN_ANY,
+                    width: 1.0,
+                    radius: 2.0.into(),
+                },
+                ..Default::default()
+            })
+            .into()
+    } else {
+        text("--").size(9).into()
+    }
+}
+
+/// Renders a value string right-aligned in a container.
+pub fn value_display<'a, Message: 'a>(
+    display: impl Into<String>,
+) -> Element<'a, Message, Theme, iced::Renderer> {
+    container(text(display.into()).size(9))
+        .width(Length::Fill)
+        .align_x(Horizontal::Right)
+        .into()
+}
+
+/// Formats an optional float for display, or "--" if None.
+pub fn fmt_float(value: Option<f32>, decimals: usize) -> String {
+    match value {
+        Some(v) => format!("{:.prec$}", v, prec = decimals),
+        None => "--".to_string(),
+    }
+}
+
+/// Creates a standard pin input row: [pin on left] [display value right-aligned].
+pub fn pin_row<'a, Message: Clone + 'a>(
+    pin_element: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
+    display: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
+) -> Row<'a, Message, Theme, iced::Renderer> {
+    row![
+        pin_element.into(),
+        container(display.into())
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center)
+}
+
+/// Creates a row of disabled collapsed pins (used when a section is collapsed).
+macro_rules! collapsed_pin_row {
+    ( $( ($id:expr, $dt:ty, $color:expr) ),+ $(,)? ) => {
+        iced::widget::row![
+            $( iced_nodegraph::pin!(Left, $id, iced::widget::text("").size(1), Input, $dt, $color).disable_interactions() ),+
+        ].spacing(2)
+    };
+}
+pub(crate) use collapsed_pin_row;
+
+/// Pushes a collapsible section (header + optional expanded rows) into a content list.
+pub fn push_section<'a, Message: Clone + 'a>(
+    items: &mut Vec<Element<'a, Message, Theme, iced::Renderer>>,
+    title: &'a str,
+    expanded: bool,
+    on_toggle: Message,
+    collapsed_pins: Option<Element<'a, Message, Theme, iced::Renderer>>,
+    rows: Vec<Element<'a, Message, Theme, iced::Renderer>>,
+) {
+    items.push(
+        section_header_with_pins(title, expanded, on_toggle, collapsed_pins).into(),
+    );
+    if expanded {
+        items.extend(rows);
+    }
 }

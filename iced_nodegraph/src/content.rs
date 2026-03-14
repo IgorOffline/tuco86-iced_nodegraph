@@ -58,118 +58,55 @@ impl NodeContentStyle {
         self
     }
 
+    /// Creates a themed node content style from an accent color.
+    ///
+    /// Dark themes tint the title background by darkening the accent color.
+    /// Light themes tint it by lightening towards white.
+    fn from_accent(accent: Color, theme: &Theme) -> Self {
+        const DARK_TINT: f32 = 0.35;
+        const LIGHT_TINT: f32 = 0.15;
+
+        let palette = theme.extended_palette();
+        let title_background = if palette.is_dark {
+            Color::from_rgba(
+                accent.r * DARK_TINT,
+                accent.g * DARK_TINT,
+                accent.b * DARK_TINT,
+                0.9,
+            )
+        } else {
+            Color::from_rgba(
+                1.0 - (1.0 - accent.r) * LIGHT_TINT,
+                1.0 - (1.0 - accent.g) * LIGHT_TINT,
+                1.0 - (1.0 - accent.b) * LIGHT_TINT,
+                0.9,
+            )
+        };
+
+        Self {
+            title_background,
+            title_text: palette.background.base.text,
+            body_background: Color::TRANSPARENT,
+            body_text: palette.background.base.text,
+            accent,
+            corner_radius: DEFAULT_CORNER_RADIUS,
+            border_width: DEFAULT_BORDER_WIDTH,
+        }
+    }
+
     /// Creates an input node style derived from theme's primary color.
     pub fn input(theme: &Theme) -> Self {
-        let palette = theme.extended_palette();
-        let primary = palette.primary.base.color;
-
-        if palette.is_dark {
-            Self {
-                title_background: Color::from_rgba(
-                    primary.r * 0.35,
-                    primary.g * 0.35,
-                    primary.b * 0.35,
-                    0.9,
-                ),
-                title_text: palette.background.base.text,
-                body_background: Color::TRANSPARENT,
-                body_text: palette.background.base.text,
-                accent: primary,
-                corner_radius: DEFAULT_CORNER_RADIUS,
-                border_width: DEFAULT_BORDER_WIDTH,
-            }
-        } else {
-            Self {
-                title_background: Color::from_rgba(
-                    1.0 - (1.0 - primary.r) * 0.15,
-                    1.0 - (1.0 - primary.g) * 0.15,
-                    1.0 - (1.0 - primary.b) * 0.15,
-                    0.9,
-                ),
-                title_text: palette.background.base.text,
-                body_background: Color::TRANSPARENT,
-                body_text: palette.background.base.text,
-                accent: primary,
-                corner_radius: DEFAULT_CORNER_RADIUS,
-                border_width: DEFAULT_BORDER_WIDTH,
-            }
-        }
+        Self::from_accent(theme.extended_palette().primary.base.color, theme)
     }
 
     /// Creates a process node style derived from theme's success color.
     pub fn process(theme: &Theme) -> Self {
-        let palette = theme.extended_palette();
-        let success = palette.success.base.color;
-
-        if palette.is_dark {
-            Self {
-                title_background: Color::from_rgba(
-                    success.r * 0.35,
-                    success.g * 0.35,
-                    success.b * 0.35,
-                    0.9,
-                ),
-                title_text: palette.background.base.text,
-                body_background: Color::TRANSPARENT,
-                body_text: palette.background.base.text,
-                accent: success,
-                corner_radius: DEFAULT_CORNER_RADIUS,
-                border_width: DEFAULT_BORDER_WIDTH,
-            }
-        } else {
-            Self {
-                title_background: Color::from_rgba(
-                    1.0 - (1.0 - success.r) * 0.15,
-                    1.0 - (1.0 - success.g) * 0.15,
-                    1.0 - (1.0 - success.b) * 0.15,
-                    0.9,
-                ),
-                title_text: palette.background.base.text,
-                body_background: Color::TRANSPARENT,
-                body_text: palette.background.base.text,
-                accent: success,
-                corner_radius: DEFAULT_CORNER_RADIUS,
-                border_width: DEFAULT_BORDER_WIDTH,
-            }
-        }
+        Self::from_accent(theme.extended_palette().success.base.color, theme)
     }
 
     /// Creates an output node style derived from theme's secondary color.
     pub fn output(theme: &Theme) -> Self {
-        let palette = theme.extended_palette();
-        let secondary = palette.secondary.base.color;
-
-        if palette.is_dark {
-            Self {
-                title_background: Color::from_rgba(
-                    secondary.r * 0.35,
-                    secondary.g * 0.35,
-                    secondary.b * 0.35,
-                    0.9,
-                ),
-                title_text: palette.background.base.text,
-                body_background: Color::TRANSPARENT,
-                body_text: palette.background.base.text,
-                accent: secondary,
-                corner_radius: DEFAULT_CORNER_RADIUS,
-                border_width: DEFAULT_BORDER_WIDTH,
-            }
-        } else {
-            Self {
-                title_background: Color::from_rgba(
-                    1.0 - (1.0 - secondary.r) * 0.15,
-                    1.0 - (1.0 - secondary.g) * 0.15,
-                    1.0 - (1.0 - secondary.b) * 0.15,
-                    0.9,
-                ),
-                title_text: palette.background.base.text,
-                body_background: Color::TRANSPARENT,
-                body_text: palette.background.base.text,
-                accent: secondary,
-                corner_radius: DEFAULT_CORNER_RADIUS,
-                border_width: DEFAULT_BORDER_WIDTH,
-            }
-        }
+        Self::from_accent(theme.extended_palette().secondary.base.color, theme)
     }
 
     /// Creates a comment node style from theme's background weak color.
@@ -425,23 +362,7 @@ pub fn node_header<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    container(content)
-        .padding(Padding {
-            top: 0.0,
-            bottom: 0.0,
-            left: border_width,
-            right: border_width,
-        })
-        .width(Length::Fill)
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(background.into()),
-            border: Border {
-                radius: border::top(corner_radius),
-                width: border_width,
-                color: Color::TRANSPARENT,
-            },
-            ..Default::default()
-        })
+    node_section(content, background, corner_radius, border_width, ContentPosition::Top)
 }
 
 /// Creates a footer container for nodes with bottom rounded corners.
@@ -479,6 +400,27 @@ pub fn node_footer<'a, Message>(
 where
     Message: Clone + 'a,
 {
+    node_section(content, background, corner_radius, border_width, ContentPosition::Bottom)
+}
+
+/// Shared implementation for header/footer node sections.
+fn node_section<'a, Message>(
+    content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
+    background: Color,
+    corner_radius: f32,
+    border_width: f32,
+    position: ContentPosition,
+) -> Container<'a, Message, Theme, iced::Renderer>
+where
+    Message: Clone + 'a,
+{
+    let radius = match position {
+        ContentPosition::Top => border::top(corner_radius),
+        ContentPosition::Bottom => border::bottom(corner_radius),
+        ContentPosition::Full => border::radius(corner_radius),
+        ContentPosition::Middle => border::radius(0.0),
+    };
+
     container(content)
         .padding(Padding {
             top: 0.0,
@@ -490,7 +432,7 @@ where
         .style(move |_theme: &Theme| container::Style {
             background: Some(background.into()),
             border: Border {
-                radius: border::bottom(corner_radius),
+                radius,
                 width: border_width,
                 color: Color::TRANSPARENT,
             },

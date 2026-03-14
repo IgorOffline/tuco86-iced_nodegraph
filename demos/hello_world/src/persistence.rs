@@ -245,11 +245,23 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         s if s == config::OUTLINE_STROKE => config::OUTLINE_STROKE,
         s if s == config::OUTLINE_BORDER_INNER => config::OUTLINE_BORDER_INNER,
         s if s == config::OUTLINE_BORDER_OUTER => config::OUTLINE_BORDER_OUTER,
+        // Stroke outline config pins
+        s if s == config::STROKE_OL_THICK => config::STROKE_OL_THICK,
+        s if s == config::STROKE_OL_COLOR => config::STROKE_OL_COLOR,
+        // Border background/outline config pins
+        s if s == config::BORDER_BG => config::BORDER_BG,
+        s if s == config::BORDER_BG_END => config::BORDER_BG_END,
+        s if s == config::BORDER_OL_THICK => config::BORDER_OL_THICK,
+        s if s == config::BORDER_OL_COLOR => config::BORDER_OL_COLOR,
         // Shadow config pins
         s if s == config::SHADOW => config::SHADOW,
         s if s == config::SHADOW_BLUR => config::SHADOW_BLUR,
+        s if s == config::SHADOW_EXPAND => config::SHADOW_EXPAND,
         s if s == config::SHADOW_OFFSET => config::SHADOW_OFFSET,
+        s if s == config::SHADOW_OFFSET_X => config::SHADOW_OFFSET_X,
+        s if s == config::SHADOW_OFFSET_Y => config::SHADOW_OFFSET_Y,
         s if s == config::SHADOW_COLOR => config::SHADOW_COLOR,
+        s if s == config::SHADOW_END_COLOR => config::SHADOW_END_COLOR,
         // Node config pins
         s if s == config::BG_COLOR => config::BG_COLOR,
         s if s == config::RADIUS => config::RADIUS,
@@ -703,8 +715,8 @@ fn pattern_type_to_string(pattern: &PatternType) -> String {
     match pattern {
         PatternType::Solid => "Solid",
         PatternType::Dashed => "Dashed",
+        PatternType::DashCapped => "DashCapped",
         PatternType::Arrowed => "Arrowed",
-        PatternType::Angled => "Angled",
         PatternType::Dotted => "Dotted",
         PatternType::DashDotted => "DashDotted",
     }
@@ -715,8 +727,9 @@ fn string_to_pattern_type(s: &str) -> PatternType {
     match s {
         "Solid" => PatternType::Solid,
         "Dashed" => PatternType::Dashed,
+        "DashCapped" => PatternType::DashCapped,
+        "Angled" => PatternType::DashCapped, // backwards compat
         "Arrowed" => PatternType::Arrowed,
-        "Angled" => PatternType::Angled,
         "Dotted" => PatternType::Dotted,
         "DashDotted" => PatternType::DashDotted,
         _ => PatternType::Solid,

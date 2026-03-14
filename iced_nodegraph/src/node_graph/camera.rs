@@ -210,7 +210,6 @@ impl Camera2D {
         Transform2D::scale(inv_zoom, inv_zoom).then_translate(-self.position.to_vector())
     }
 
-    #[allow(dead_code)]
     pub fn world_to_screen(&self) -> Transform2D<f32, World, Screen> {
         // Converts world coordinates to screen coordinates.
         // The transform is always invertible since zoom is clamped to [0.1, 10.0].

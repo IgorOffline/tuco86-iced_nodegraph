@@ -696,7 +696,7 @@ fn apply_pattern(sdf: SdfResult, layer: SdfLayer) -> f32 {
 
     var u = sdf.u;
     if layer.flow_speed != 0.0 {
-        u = u + uniforms.time * layer.flow_speed;
+        u = u - uniforms.time * layer.flow_speed;
     }
 
     switch layer.pattern_type {
@@ -708,7 +708,7 @@ fn apply_pattern(sdf: SdfResult, layer: SdfLayer) -> f32 {
             let gap = layer.pattern_param1;
             let angle = layer.pattern_param2;
             let period = dash + gap;
-            let shifted_u = u - sdf.v * tan(angle);
+            let shifted_u = u + sdf.v * tan(angle);
             let nearest = round(shifted_u / period) * period;
             let dist_along = shifted_u - nearest;
             // Box SDF for square-cap dashes (angle=0 gives straight caps)
@@ -721,7 +721,7 @@ fn apply_pattern(sdf: SdfResult, layer: SdfLayer) -> f32 {
             let gap = layer.pattern_param1;
             let angle = layer.pattern_param2;
             let period = segment + gap;
-            let shifted_u = u - abs(sdf.v) * tan(angle);
+            let shifted_u = u + abs(sdf.v) * tan(angle);
             let nearest = round(shifted_u / period) * period;
             let dist_along = shifted_u - nearest;
             let dd = abs(vec2(dist_along, dist)) - vec2(segment * 0.5, thickness * 0.5);
@@ -761,7 +761,7 @@ fn apply_pattern(sdf: SdfResult, layer: SdfLayer) -> f32 {
             let gap = layer.pattern_param1;
             let angle = layer.pattern_param2;
             let period = dash + gap;
-            let shifted_u = u - sdf.v * tan(angle);
+            let shifted_u = u + sdf.v * tan(angle);
             let nearest = round(shifted_u / period) * period;
             let dist_along = shifted_u - nearest;
             // Capsule SDF: clamp along dash then measure distance
@@ -983,9 +983,9 @@ fn evaluate_sdf(p: vec2<f32>, shape: ShapeInstance) -> SdfResult {
                 let tan_angle = tan(angle_d);
                 var u_d = a.u;
                 if speed_d != 0.0 {
-                    u_d = u_d + uniforms.time * speed_d;
+                    u_d = u_d - uniforms.time * speed_d;
                 }
-                let shifted_u = u_d - a.dist * tan_angle;
+                let shifted_u = u_d + a.dist * tan_angle;
                 let nearest = round(shifted_u / actual_period) * actual_period;
                 let dist_along = shifted_u - nearest;
                 let dd = abs(vec2(dist_along, a.dist)) - vec2(half_dash, half_thick);
@@ -1017,9 +1017,9 @@ fn evaluate_sdf(p: vec2<f32>, shape: ShapeInstance) -> SdfResult {
                 let tan_angle_a = tan(angle_a);
                 var u_a = a.u;
                 if speed_a != 0.0 {
-                    u_a = u_a + uniforms.time * speed_a;
+                    u_a = u_a - uniforms.time * speed_a;
                 }
-                let shifted_u_a = u_a - abs(a.dist) * tan_angle_a;
+                let shifted_u_a = u_a + abs(a.dist) * tan_angle_a;
                 let nearest_a = round(shifted_u_a / actual_period_a) * actual_period_a;
                 let dist_along_a = shifted_u_a - nearest_a;
                 let dd_a = abs(vec2(dist_along_a, a.dist)) - vec2(half_seg, half_thick_a);

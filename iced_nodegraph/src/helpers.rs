@@ -169,42 +169,37 @@ pub fn clone_nodes<T, F>(
 where
     F: Fn(usize) -> Option<(Point, T)>,
 {
-    // Build mapping from old index to new index
-    let index_map: HashMap<usize, usize> = source_indices
-        .iter()
-        .enumerate()
-        .map(|(i, &old_idx)| (old_idx, node_count + i))
-        .collect();
+    // Build mapping from old index to new index.
+    // Uses a simple linear scan since source_indices is typically small (<100 nodes).
+    let remap = |old_idx: usize| -> Option<usize> {
+        source_indices
+            .iter()
+            .position(|&i| i == old_idx)
+            .map(|i| node_count + i)
+    };
 
     // Clone nodes with offset positions
     let nodes: Vec<_> = source_indices
         .iter()
-        .filter_map(|&idx| {
+        .enumerate()
+        .filter_map(|(i, &idx)| {
             get_node(idx).map(|(pos, data)| {
                 let new_pos = Point::new(pos.x + offset.x, pos.y + offset.y);
-                let new_idx = *index_map
-                    .get(&idx)
-                    .expect("clone_nodes: source index must exist in index_map");
-                (new_idx, new_pos, data)
+                (node_count + i, new_pos, data)
             })
         })
         .collect();
 
     // Remap internal edges (edges where both endpoints are in the cloned set)
-    let source_set: HashSet<_> = source_indices.iter().copied().collect();
     let internal_edges: Vec<_> = edges
         .iter()
-        .filter(|(from, to)| source_set.contains(&from.node_id) && source_set.contains(&to.node_id))
-        .map(|(from, to)| {
-            let new_from_id = *index_map
-                .get(&from.node_id)
-                .expect("clone_nodes: edge source node must exist in index_map");
-            let new_to_id = *index_map
-                .get(&to.node_id)
-                .expect("clone_nodes: edge target node must exist in index_map");
-            let new_from = PinReference::new(new_from_id, from.pin_id);
-            let new_to = PinReference::new(new_to_id, to.pin_id);
-            (new_from, new_to)
+        .filter_map(|(from, to)| {
+            let new_from_id = remap(from.node_id)?;
+            let new_to_id = remap(to.node_id)?;
+            Some((
+                PinReference::new(new_from_id, from.pin_id),
+                PinReference::new(new_to_id, to.pin_id),
+            ))
         })
         .collect();
 
@@ -383,9 +378,9 @@ impl SelectionHelper {
         self.selected.iter().copied().collect()
     }
 
-    /// Get reference to the underlying HashSet.
-    pub fn as_set(&self) -> &HashSet<usize> {
-        &self.selected
+    /// Iterate over selected node indices.
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.selected.iter().copied()
     }
 
     /// Remap indices after node deletion.
@@ -423,6 +418,15 @@ impl<'a> IntoIterator for &'a SelectionHelper {
 
     fn into_iter(self) -> Self::IntoIter {
         self.selected.iter()
+    }
+}
+
+impl IntoIterator for SelectionHelper {
+    type Item = usize;
+    type IntoIter = std::collections::hash_set::IntoIter<usize>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.selected.into_iter()
     }
 }
 

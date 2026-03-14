@@ -158,7 +158,8 @@ impl Application {
             .filter_map(|conn| {
                 // Get the nodes to find their input/output counts
                 let from_node = shader_graph.nodes.iter().find(|n| n.id == conn.from_node)?;
-                let to_node = shader_graph.nodes.iter().find(|n| n.id == conn.to_node)?;
+                // Validate target node exists
+                shader_graph.nodes.iter().find(|n| n.id == conn.to_node)?;
 
                 // Find node indices (position in nodes vec)
                 let from_node_idx = shader_graph
@@ -175,16 +176,6 @@ impl Application {
 
                 // to_socket is an input index -> visual pin = input_index (inputs come first)
                 let to_visual_pin = conn.to_socket;
-
-                println!(
-                    "Edge: {}:{} (out {}) -> {}:{} (in {})",
-                    from_node.node_type.name(),
-                    from_visual_pin,
-                    conn.from_socket,
-                    to_node.node_type.name(),
-                    to_visual_pin,
-                    conn.to_socket
-                );
 
                 Some((
                     PinRef::new(from_node_idx, from_visual_pin),
@@ -255,17 +246,8 @@ impl Application {
                                 from_socket,
                                 to_node_data.id,
                                 to_socket,
-                                from_node_data.node_type.name().to_string(),
-                                to_node_data.node_type.name().to_string(),
                             ))
                         } else {
-                            println!(
-                                "Invalid connection: pin {} (outputs: {}) -> pin {} (inputs: {})",
-                                from.pin_id,
-                                from_node_data.outputs.len(),
-                                to.pin_id,
-                                to_node_data.inputs.len()
-                            );
                             None
                         }
                     } else {
@@ -274,19 +256,13 @@ impl Application {
                 };
 
                 // Now apply the connection
-                if let Some((from_id, from_socket, to_id, to_socket, from_name, to_name)) =
-                    connection_info
-                {
+                if let Some((from_id, from_socket, to_id, to_socket)) = connection_info {
                     self.shader_graph.add_connection(shader_graph::Connection {
                         from_node: from_id,
                         from_socket,
                         to_node: to_id,
                         to_socket,
                     });
-                    println!(
-                        "Connected: {} output {} -> {} input {}",
-                        from_name, from_socket, to_name, to_socket
-                    );
                 }
                 self.recompile();
             }
@@ -388,7 +364,6 @@ impl Application {
                 // Spawn node at screen center (converted to world coordinates)
                 let position = self.spawn_position();
                 self.shader_graph.add_node(node_type, position);
-                println!("Spawned node: {}", node_type.name());
             }
             Message::ChangeTheme(theme) => {
                 self.current_theme = theme;
@@ -446,6 +421,7 @@ impl Application {
                     self.palette_selected_index,
                     Message::CommandPaletteInput,
                     Message::CommandPaletteSelect,
+                    Message::CommandPaletteNavigate,
                     || Message::CommandPaletteCancel,
                 )
             ]

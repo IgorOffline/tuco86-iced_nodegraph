@@ -251,9 +251,8 @@ struct ComputedStyle {
     border_width: Option<f32>,
     fill_color: Option<Color>,
     shadow: Option<ShadowConfig>,
-    edge_thickness: Option<f32>,
-    edge_color: Option<Color>,
-    edge_curve: Option<EdgeCurve>,
+    /// Full EdgeConfig from connected Edge Config node (passed through as-is)
+    edge_config: Option<EdgeConfig>,
     // Pin config values
     pin_color: Option<Color>,
     pin_radius: Option<f32>,
@@ -285,19 +284,9 @@ impl ComputedStyle {
         config
     }
 
-    /// Builds an EdgeConfig from computed values
+    /// Returns the EdgeConfig (passed through from Edge Config node as-is).
     fn to_edge_config(&self) -> EdgeConfig {
-        let mut config = EdgeConfig::new();
-        if let Some(t) = self.edge_thickness {
-            config = config.thickness(t);
-        }
-        if let Some(c) = self.edge_color {
-            config = config.solid_color(c);
-        }
-        if let Some(curve) = self.edge_curve {
-            config = config.curve(curve);
-        }
-        config
+        self.edge_config.clone().unwrap_or_default()
     }
 
     /// Builds a PinConfig from computed values
@@ -1003,22 +992,41 @@ impl Application {
                     inputs.pattern_angle = value.as_float().map(|deg| deg.to_radians());
                 } else if *pin_label == pin::SPEED {
                     inputs.animation_speed = value.as_float();
-                // Border settings (width > 0 enables border)
+                // Stroke outline
+                } else if *pin_label == pin::STROKE_OL_THICK {
+                    inputs.stroke_outline_thickness = value.as_float();
+                } else if *pin_label == pin::STROKE_OL_COLOR {
+                    inputs.stroke_outline_color = value.as_color();
+                // Border settings
                 } else if *pin_label == pin::BORDER_WIDTH {
-                    inputs.border_width = value.as_float();
+                    inputs.border_thickness = value.as_float();
                 } else if *pin_label == pin::BORDER_GAP {
                     inputs.border_gap = value.as_float();
                 } else if *pin_label == pin::BORDER_START_COLOR {
-                    inputs.border_start_color = value.as_color();
+                    inputs.border_color = value.as_color();
                 } else if *pin_label == pin::BORDER_END_COLOR {
-                    inputs.border_end_color = value.as_color();
+                    inputs.border_color_end = value.as_color();
+                } else if *pin_label == pin::BORDER_BG {
+                    inputs.border_background = value.as_color();
+                } else if *pin_label == pin::BORDER_BG_END {
+                    inputs.border_background_end = value.as_color();
+                } else if *pin_label == pin::BORDER_OL_THICK {
+                    inputs.border_outline_thickness = value.as_float();
+                } else if *pin_label == pin::BORDER_OL_COLOR {
+                    inputs.border_outline_color = value.as_color();
                 // Shadow settings
                 } else if *pin_label == pin::SHADOW_BLUR {
                     inputs.shadow_blur = value.as_float();
-                } else if *pin_label == pin::SHADOW_OFFSET {
+                } else if *pin_label == pin::SHADOW_EXPAND {
                     inputs.shadow_expand = value.as_float();
                 } else if *pin_label == pin::SHADOW_COLOR {
                     inputs.shadow_color = value.as_color();
+                } else if *pin_label == pin::SHADOW_END_COLOR {
+                    inputs.shadow_color_end = value.as_color();
+                } else if *pin_label == pin::SHADOW_OFFSET_X {
+                    inputs.shadow_offset_x = value.as_float();
+                } else if *pin_label == pin::SHADOW_OFFSET_Y {
+                    inputs.shadow_offset_y = value.as_float();
                 }
             }
             ConfigNodeType::ShadowConfig(inputs) => {
@@ -1153,15 +1161,11 @@ impl Application {
                             }
                             ConfigOutput::Edge(edge_config) => {
                                 if *has_edge_config {
-                                    if let Some(p) = edge_config.pattern {
-                                        computed.edge_thickness = Some(p.thickness);
-                                    }
-                                    if let Some(c) = edge_config.start_color {
-                                        computed.edge_color = Some(c);
-                                    }
-                                    if let Some(curve) = edge_config.curve {
-                                        computed.edge_curve = Some(curve);
-                                    }
+                                    // Merge with existing or set as new
+                                    computed.edge_config = Some(match &computed.edge_config {
+                                        Some(existing) => edge_config.merge(existing),
+                                        None => edge_config.clone(),
+                                    });
                                 }
                             }
                             ConfigOutput::Pin(pin_config) => {
@@ -2029,6 +2033,7 @@ impl Application {
                 self.palette_selected_index,
                 ApplicationMessage::CommandPaletteInput,
                 ApplicationMessage::CommandPaletteSelect,
+                ApplicationMessage::CommandPaletteNavigate,
                 || ApplicationMessage::CommandPaletteCancel,
             )
         } else {
@@ -2471,15 +2476,148 @@ mod tests {
     }
 
     #[test]
-    fn test_computed_style_to_edge_config() {
+    fn test_computed_style_edge_config_passthrough() {
+        // EdgeConfig should be stored and returned as-is
         let mut style = ComputedStyle::default();
-        style.edge_thickness = Some(3.0);
-        style.edge_color = Some(Color::from_rgb(0.5, 0.5, 0.5));
+        assert!(style.to_edge_config().pattern.is_none());
 
-        let config = style.to_edge_config();
-        let stroke = config.stroke.as_ref().expect("should have stroke config");
-        assert_eq!(stroke.width, Some(3.0));
-        assert_eq!(stroke.start_color, Some(Color::from_rgb(0.5, 0.5, 0.5)));
-        assert_eq!(stroke.end_color, Some(Color::from_rgb(0.5, 0.5, 0.5)));
+        let ec = EdgeConfig::new()
+            .thickness(5.0)
+            .solid_color(Color::from_rgb(1.0, 0.0, 0.0))
+            .curve(EdgeCurve::Line);
+        style.edge_config = Some(ec);
+
+        let result = style.to_edge_config();
+        assert_eq!(result.pattern.unwrap().thickness, 5.0);
+        assert_eq!(result.start_color, Some(Color::from_rgb(1.0, 0.0, 0.0)));
+        assert_eq!(result.curve, Some(EdgeCurve::Line));
+    }
+
+    #[test]
+    fn test_edge_config_inputs_pattern_type_dashed() {
+        use iced_nodegraph::SdfPatternType;
+
+        let mut inputs = EdgeConfigInputs::default();
+        inputs.pattern_type = Some(PatternType::Dashed);
+        inputs.thickness = Some(3.0);
+        inputs.dash_length = Some(10.0);
+        inputs.gap_length = Some(5.0);
+
+        let config = inputs.build();
+        let pattern = config.pattern.expect("pattern should be Some");
+        assert_eq!(pattern.thickness, 3.0);
+        assert!(
+            matches!(pattern.pattern_type, SdfPatternType::Dashed { dash, gap, .. } if (dash - 10.0).abs() < 0.01 && (gap - 5.0).abs() < 0.01),
+            "Expected Dashed pattern, got {:?}",
+            pattern.pattern_type
+        );
+    }
+
+    #[test]
+    fn test_edge_config_inputs_pattern_type_arrowed() {
+        use iced_nodegraph::SdfPatternType;
+
+        let mut inputs = EdgeConfigInputs::default();
+        inputs.pattern_type = Some(PatternType::Arrowed);
+
+        let config = inputs.build();
+        let pattern = config.pattern.expect("pattern should be Some");
+        assert!(
+            matches!(pattern.pattern_type, SdfPatternType::Arrowed { .. }),
+            "Expected Arrowed pattern, got {:?}",
+            pattern.pattern_type
+        );
+    }
+
+    #[test]
+    fn test_edge_config_inputs_pattern_type_dotted() {
+        use iced_nodegraph::SdfPatternType;
+
+        let mut inputs = EdgeConfigInputs::default();
+        inputs.pattern_type = Some(PatternType::Dotted);
+        inputs.dot_radius = Some(3.0);
+        inputs.gap_length = Some(4.0);
+
+        let config = inputs.build();
+        let pattern = config.pattern.expect("pattern should be Some");
+        assert!(
+            matches!(pattern.pattern_type, SdfPatternType::Dotted { .. }),
+            "Expected Dotted pattern, got {:?}",
+            pattern.pattern_type
+        );
+    }
+
+    #[test]
+    fn test_edge_config_inputs_pattern_type_dash_capped() {
+        use iced_nodegraph::SdfPatternType;
+
+        let mut inputs = EdgeConfigInputs::default();
+        inputs.pattern_type = Some(PatternType::DashCapped);
+
+        let config = inputs.build();
+        let pattern = config.pattern.expect("pattern should be Some");
+        assert!(
+            matches!(pattern.pattern_type, SdfPatternType::DashCapped { .. }),
+            "Expected DashCapped pattern, got {:?}",
+            pattern.pattern_type
+        );
+    }
+
+    #[test]
+    fn test_edge_config_inputs_pattern_type_dash_dotted() {
+        use iced_nodegraph::SdfPatternType;
+
+        let mut inputs = EdgeConfigInputs::default();
+        inputs.pattern_type = Some(PatternType::DashDotted);
+
+        let config = inputs.build();
+        let pattern = config.pattern.expect("pattern should be Some");
+        assert!(
+            matches!(pattern.pattern_type, SdfPatternType::DashDotted { .. }),
+            "Expected DashDotted pattern, got {:?}",
+            pattern.pattern_type
+        );
+    }
+
+    #[test]
+    fn test_edge_config_inputs_pattern_preserved_through_build() {
+        // Verify the full pipeline: EdgeConfigInputs -> build() -> EdgeConfig
+        // Pattern, border, shadow must all survive
+        use iced_nodegraph::SdfPatternType;
+
+        let mut inputs = EdgeConfigInputs::default();
+        inputs.pattern_type = Some(PatternType::Dashed);
+        inputs.thickness = Some(4.0);
+        inputs.dash_length = Some(8.0);
+        inputs.gap_length = Some(4.0);
+        inputs.animation_speed = Some(50.0);
+        inputs.start_color = Some(Color::from_rgb(1.0, 0.0, 0.0));
+        inputs.end_color = Some(Color::from_rgb(0.0, 0.0, 1.0));
+        inputs.border_thickness = Some(2.0);
+        inputs.border_gap = Some(1.0);
+        inputs.shadow_blur = Some(6.0);
+        inputs.shadow_expand = Some(3.0);
+
+        let config = inputs.build();
+
+        // Pattern
+        let pattern = config.pattern.expect("pattern must be present");
+        assert_eq!(pattern.thickness, 4.0);
+        assert!(matches!(pattern.pattern_type, SdfPatternType::Dashed { .. }));
+        assert!((pattern.flow_speed - 50.0).abs() < 0.01);
+
+        // Colors
+        assert_eq!(config.start_color, Some(Color::from_rgb(1.0, 0.0, 0.0)));
+        assert_eq!(config.end_color, Some(Color::from_rgb(0.0, 0.0, 1.0)));
+
+        // Border
+        let border = config.border.expect("border must be present");
+        assert_eq!(border.width, 2.0);
+        assert_eq!(border.gap, 1.0);
+
+        // Shadow
+        let shadow = config.shadow.expect("shadow must be present");
+        assert_eq!(shadow.blur, 6.0);
+        assert_eq!(shadow.expand, 3.0);
     }
 }
