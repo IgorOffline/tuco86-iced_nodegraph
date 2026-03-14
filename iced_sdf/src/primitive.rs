@@ -214,6 +214,109 @@ impl Pipeline for SdfPipeline {
     }
 }
 
+/// Subdivide a shape into 16x16 tiles and cull tiles that are too far from the shape.
+///
+/// Returns the number of tile instances emitted. Each visible tile becomes a
+/// `ShapeInstance` in the pipeline's shapes buffer.
+#[allow(clippy::too_many_arguments)]
+fn cull_tiles(
+    shape: &Sdf,
+    screen_bounds: [f32; 4],
+    ops_offset: u32,
+    ops_count: u32,
+    layers_offset: u32,
+    layers_count: u32,
+    max_radius: f32,
+    has_fill: bool,
+    camera_position: (f32, f32),
+    camera_zoom: f32,
+    shapes_buffer: &mut buffer::Buffer<types::ShapeInstance>,
+    device: &Device,
+    queue: &Queue,
+) -> u32 {
+    let [sx, sy, sw, sh] = screen_bounds;
+    let use_tiling = sw >= MIN_TILING_SIZE && sh >= MIN_TILING_SIZE;
+
+    if !use_tiling {
+        let _ = shapes_buffer.push(
+            device,
+            queue,
+            types::ShapeInstance {
+                bounds: glam::Vec4::new(sx, sy, sw, sh),
+                ops_offset,
+                ops_count,
+                layers_offset,
+                layers_count,
+            },
+        );
+        return 1;
+    }
+
+    let tile = TILE_SIZE;
+    let tile_half_diag = tile * std::f32::consts::FRAC_1_SQRT_2;
+    let inv_zoom = 1.0 / camera_zoom;
+
+    let cols = ((sw / tile).ceil() as u32).max(1);
+    let rows = ((sh / tile).ceil() as u32).max(1);
+
+    let mut count = 0u32;
+    for row in 0..rows {
+        for col in 0..cols {
+            let tx = sx + col as f32 * tile;
+            let ty = sy + row as f32 * tile;
+            let tw = tile.min(sx + sw - tx);
+            let th = tile.min(sy + sh - ty);
+
+            let center_sx = tx + tw * 0.5;
+            let center_sy = ty + th * 0.5;
+            let world_x = center_sx * inv_zoom - camera_position.0;
+            let world_y = center_sy * inv_zoom - camera_position.1;
+
+            let result = eval::evaluate(
+                shape.node(),
+                glam::Vec2::new(world_x, world_y),
+            );
+
+            let world_half_diag = tile_half_diag * inv_zoom;
+            let dist = result.dist;
+            let cull_dist = if has_fill { dist } else { dist.abs() };
+            if cull_dist - world_half_diag > max_radius {
+                continue;
+            }
+
+            let _ = shapes_buffer.push(
+                device,
+                queue,
+                types::ShapeInstance {
+                    bounds: glam::Vec4::new(tx, ty, tw, th),
+                    ops_offset,
+                    ops_count,
+                    layers_offset,
+                    layers_count,
+                },
+            );
+            count += 1;
+        }
+    }
+
+    if count == 0 {
+        let _ = shapes_buffer.push(
+            device,
+            queue,
+            types::ShapeInstance {
+                bounds: glam::Vec4::new(sx, sy, sw, sh),
+                ops_offset,
+                ops_count,
+                layers_offset,
+                layers_count,
+            },
+        );
+        1
+    } else {
+        count
+    }
+}
+
 impl Primitive for SdfPrimitive {
     type Pipeline = SdfPipeline;
 
@@ -248,96 +351,27 @@ impl Primitive for SdfPrimitive {
             None => TILE_SIZE,
         };
 
-        let [sx, sy, sw, sh] = self.screen_bounds;
-        let use_tiling = effective_tile_size > 0.0
-            && sw >= MIN_TILING_SIZE
-            && sh >= MIN_TILING_SIZE;
-
-        let tile_count = if use_tiling {
-            // Compute max effect radius from all layers
+        let tile_count = if effective_tile_size > 0.0 {
             let max_radius = self.layers.iter().map(|l| l.max_effect_radius()).fold(0.0f32, f32::max);
-            // Check if any layer fills the shape interior (no pattern = solid fill).
-            // Fill layers render everywhere inside the boundary, so interior tiles
-            // must never be culled.
             let has_fill = self.layers.iter().any(|l| l.is_fill());
-
-            let tile = effective_tile_size;
-            let tile_half_diag = tile * std::f32::consts::FRAC_1_SQRT_2;
-            let inv_zoom = 1.0 / self.camera_zoom;
-
-            let cols = ((sw / tile).ceil() as u32).max(1);
-            let rows = ((sh / tile).ceil() as u32).max(1);
-
-            let mut count = 0u32;
-            for row in 0..rows {
-                for col in 0..cols {
-                    // Tile bounds in screen space
-                    let tx = sx + col as f32 * tile;
-                    let ty = sy + row as f32 * tile;
-                    let tw = tile.min(sx + sw - tx);
-                    let th = tile.min(sy + sh - ty);
-
-                    // Tile center in screen space -> world space
-                    let center_sx = tx + tw * 0.5;
-                    let center_sy = ty + th * 0.5;
-                    let world_x = center_sx * inv_zoom - self.camera_position.0;
-                    let world_y = center_sy * inv_zoom - self.camera_position.1;
-
-                    // Evaluate SDF at tile center
-                    let result = eval::evaluate(
-                        self.shape.node(),
-                        glam::Vec2::new(world_x, world_y),
-                    );
-
-                    // Convert tile half-diagonal to world space for comparison
-                    let world_half_diag = tile_half_diag * inv_zoom;
-
-                    // Culling strategy depends on whether we have fill layers:
-                    // - Outside tiles (dist > 0): always cull if beyond max_radius
-                    // - Inside tiles (dist < 0): only cull for stroke-only shapes
-                    //   (no fill). Fill layers render the entire interior, so
-                    //   interior tiles must be kept.
-                    let dist = result.dist;
-                    let cull_dist = if has_fill { dist } else { dist.abs() };
-                    if cull_dist - world_half_diag > max_radius {
-                        continue;
-                    }
-
-                    let _ = pipeline.shapes_buffer.push(
-                        device,
-                        queue,
-                        types::ShapeInstance {
-                            bounds: glam::Vec4::new(tx, ty, tw, th),
-                            ops_offset,
-                            ops_count,
-                            layers_offset,
-                            layers_count,
-                        },
-                    );
-                    count += 1;
-                }
-            }
-
-            // If all tiles were culled, emit at least one (the full shape)
-            // to avoid visual artifacts from rounding
-            if count == 0 {
-                let _ = pipeline.shapes_buffer.push(
-                    device,
-                    queue,
-                    types::ShapeInstance {
-                        bounds: glam::Vec4::new(sx, sy, sw, sh),
-                        ops_offset,
-                        ops_count,
-                        layers_offset,
-                        layers_count,
-                    },
-                );
-                1
-            } else {
-                count
-            }
+            cull_tiles(
+                &self.shape,
+                self.screen_bounds,
+                ops_offset,
+                ops_count,
+                layers_offset,
+                layers_count,
+                max_radius,
+                has_fill,
+                self.camera_position,
+                self.camera_zoom,
+                &mut pipeline.shapes_buffer,
+                device,
+                queue,
+            )
         } else {
-            // No tiling: single instance for the whole shape
+            // Tiling disabled
+            let [sx, sy, sw, sh] = self.screen_bounds;
             let _ = pipeline.shapes_buffer.push(
                 device,
                 queue,
@@ -491,24 +525,49 @@ impl Primitive for SdfBatchPrimitive {
         bounds: &Rectangle,
         viewport: &Viewport,
     ) {
-        let shape_count = self.batch.shape_count() as u32;
-
-        if shape_count == 0 {
+        if self.batch.is_empty() {
             pipeline.tile_counts.push(0);
             return;
         }
 
-        // Upload batch to shared pipeline buffers (handles offset adjustment)
-        self.batch.upload(
-            &mut pipeline.shapes_buffer,
-            &mut pipeline.ops_buffer,
-            &mut pipeline.layers_buffer,
-            device,
-            queue,
-        );
+        // Upload ops and layers in bulk (shapes are handled per-tile below)
+        let ops_base = pipeline.ops_buffer.len() as u32;
+        let layers_base = pipeline.layers_buffer.len() as u32;
+        let _ = pipeline
+            .ops_buffer
+            .push_bulk(device, queue, self.batch.ops());
+        let _ = pipeline
+            .layers_buffer
+            .push_bulk(device, queue, self.batch.gpu_layers());
 
-        // Each shape = 1 instance (no tiling in batch mode)
-        pipeline.tile_counts.push(shape_count);
+        // Per-shape tile culling: subdivide each shape into 16x16 tiles
+        let mut total_tiles = 0u32;
+        let shapes = self.batch.shapes();
+        let sdf_trees = self.batch.sdf_trees();
+        let max_radii = self.batch.max_radii();
+        let has_fills = self.batch.has_fills();
+
+        for i in 0..self.batch.shape_count() {
+            let inst = &shapes[i];
+            let sb = [inst.bounds.x, inst.bounds.y, inst.bounds.z, inst.bounds.w];
+            total_tiles += cull_tiles(
+                &sdf_trees[i],
+                sb,
+                inst.ops_offset + ops_base,
+                inst.ops_count,
+                inst.layers_offset + layers_base,
+                inst.layers_count,
+                max_radii[i],
+                has_fills[i],
+                self.camera_position,
+                self.camera_zoom,
+                &mut pipeline.shapes_buffer,
+                device,
+                queue,
+            );
+        }
+
+        pipeline.tile_counts.push(total_tiles);
 
         // Write uniforms
         let scale = viewport.scale_factor();

@@ -24,6 +24,12 @@ pub struct SdfBatch {
     layers: Vec<SdfLayer>,
     /// Scratch buffer reused across push() calls for compilation.
     compile_scratch: Vec<SdfOp>,
+    /// Per-shape SDF trees for tile culling evaluation.
+    sdf_trees: Vec<Sdf>,
+    /// Per-shape max effect radius (precomputed from layers).
+    max_radii: Vec<f32>,
+    /// Per-shape has_fill flag (affects tile culling strategy).
+    has_fills: Vec<bool>,
 }
 
 impl SdfBatch {
@@ -34,6 +40,9 @@ impl SdfBatch {
             ops: Vec::new(),
             layers: Vec::new(),
             compile_scratch: Vec::new(),
+            sdf_trees: Vec::new(),
+            max_radii: Vec::new(),
+            has_fills: Vec::new(),
         }
     }
 
@@ -44,6 +53,9 @@ impl SdfBatch {
             ops: Vec::with_capacity(ops),
             layers: Vec::with_capacity(layers),
             compile_scratch: Vec::new(),
+            sdf_trees: Vec::with_capacity(shapes),
+            max_radii: Vec::with_capacity(shapes),
+            has_fills: Vec::with_capacity(shapes),
         }
     }
 
@@ -68,6 +80,17 @@ impl SdfBatch {
             self.layers.push(layer.to_gpu());
         }
 
+        // Store tile culling metadata
+        self.sdf_trees.push(shape.clone());
+        self.max_radii.push(
+            shape_layers
+                .iter()
+                .map(|l| l.max_effect_radius())
+                .fold(0.0f32, f32::max),
+        );
+        self.has_fills
+            .push(shape_layers.iter().any(|l| l.is_fill()));
+
         let index = self.shapes.len();
         self.shapes.push(ShapeInstance {
             bounds: glam::Vec4::new(bounds[0], bounds[1], bounds[2], bounds[3]),
@@ -85,6 +108,9 @@ impl SdfBatch {
         self.shapes.clear();
         self.ops.clear();
         self.layers.clear();
+        self.sdf_trees.clear();
+        self.max_radii.clear();
+        self.has_fills.clear();
     }
 
     /// Number of shapes in the batch.
@@ -120,6 +146,21 @@ impl SdfBatch {
     /// Access the flat layers buffer.
     pub fn gpu_layers(&self) -> &[SdfLayer] {
         &self.layers
+    }
+
+    /// Access per-shape SDF trees (for tile culling evaluation).
+    pub fn sdf_trees(&self) -> &[Sdf] {
+        &self.sdf_trees
+    }
+
+    /// Access per-shape max effect radii.
+    pub fn max_radii(&self) -> &[f32] {
+        &self.max_radii
+    }
+
+    /// Access per-shape has_fill flags.
+    pub fn has_fills(&self) -> &[bool] {
+        &self.has_fills
     }
 
     /// Upload the batch contents to GPU pipeline buffers using bulk writes.
