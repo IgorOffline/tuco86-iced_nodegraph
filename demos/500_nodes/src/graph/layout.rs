@@ -1,7 +1,6 @@
 //! Force-directed graph layout using Fruchterman-Reingold algorithm.
 
 use iced::Point;
-use iced_nodegraph::PinRef;
 
 /// Physics simulation parameters
 const REPULSION: f32 = 8000.0;
@@ -29,7 +28,7 @@ impl ForceDirectedLayout {
     /// Creates a new layout from initial positions and edges.
     pub fn new(
         positions: Vec<Point>,
-        edges: &[(PinRef<usize, usize>, PinRef<usize, usize>)],
+        edges: &[super::Edge],
     ) -> Self {
         let nodes = positions
             .into_iter()
