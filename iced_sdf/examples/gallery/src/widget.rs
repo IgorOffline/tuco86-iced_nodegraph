@@ -25,8 +25,9 @@ pub fn sdf_canvas<'a>(
     layer_groups: Option<Vec<(Vec<Layer>, bool)>>,
     debug_tiles: bool,
     extra_shapes: &[iced_sdf::Sdf],
+    shape_override: Option<iced_sdf::Sdf>,
 ) -> Element<'a, crate::Message> {
-    let shape = (entry.build)(time);
+    let shape = shape_override.unwrap_or_else(|| (entry.build)(time));
 
     let groups = match layer_groups {
         Some(g) => g,

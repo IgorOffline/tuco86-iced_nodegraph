@@ -226,6 +226,232 @@ enum LayerKind {
     Stroke,
 }
 
+// ---------------------------------------------------------------------------
+// Node editor types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy)]
+enum NFloatParam {
+    CornerRadius,
+    Opacity,
+    BorderWidth,
+    BorderOutlineWidth,
+    BorderDashLen,
+    BorderDashGap,
+    ShadowOffsetX,
+    ShadowOffsetY,
+    ShadowBlur,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum NColorParam {
+    Fill,
+    Border,
+    BorderOutline,
+    Shadow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NLayerKind {
+    Shadow,
+    Fill,
+    Border,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeBorderPattern {
+    Solid,
+    Dashed,
+}
+
+impl NodeBorderPattern {
+    const ALL: &'static [Self] = &[Self::Solid, Self::Dashed];
+}
+
+impl std::fmt::Display for NodeBorderPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Solid => write!(f, "Solid"),
+            Self::Dashed => write!(f, "Dashed"),
+        }
+    }
+}
+
+struct RandomNodeData {
+    center: [f32; 2],
+    half_size: [f32; 2],
+}
+
+fn generate_random_node_data(count: usize) -> Vec<RandomNodeData> {
+    let mut nodes = Vec::with_capacity(count);
+    for i in 0..count {
+        let seed = (i + 13) as f32;
+        let cx = ((seed * 137.3) % 400.0) - 200.0;
+        let cy = ((seed * 89.7) % 300.0) - 150.0;
+        let hw = 40.0 + (seed * 31.1) % 80.0;
+        let hh = 25.0 + (seed * 19.3) % 55.0;
+        nodes.push(RandomNodeData {
+            center: [cx, cy],
+            half_size: [hw, hh],
+        });
+    }
+    nodes
+}
+
+struct NodeEditorState {
+    expanded_colors: HashSet<NColorParam>,
+
+    shadow_visible: bool,
+    fill_visible: bool,
+    border_visible: bool,
+
+    shadow_debug: bool,
+    fill_debug: bool,
+    border_debug: bool,
+
+    node_count: u32,
+    random_nodes: Vec<RandomNodeData>,
+
+    fill_color: [f32; 4],
+    corner_radius: f32,
+    opacity: f32,
+
+    border_pattern: NodeBorderPattern,
+    border_width: f32,
+    border_color: [f32; 4],
+    border_outline_width: f32,
+    border_outline_color: [f32; 4],
+    border_dash_len: f32,
+    border_dash_gap: f32,
+
+    shadow_offset_x: f32,
+    shadow_offset_y: f32,
+    shadow_blur: f32,
+    shadow_color: [f32; 4],
+}
+
+impl NodeEditorState {
+    fn new() -> Self {
+        Self {
+            expanded_colors: HashSet::new(),
+
+            shadow_visible: true,
+            fill_visible: true,
+            border_visible: true,
+
+            shadow_debug: false,
+            fill_debug: false,
+            border_debug: false,
+
+            node_count: 1,
+            random_nodes: generate_random_node_data(99),
+
+            fill_color: [0.14, 0.14, 0.16, 1.0],
+            corner_radius: 8.0,
+            opacity: 0.75,
+
+            border_pattern: NodeBorderPattern::Solid,
+            border_width: 1.0,
+            border_color: [0.30, 0.30, 0.35, 1.0],
+            border_outline_width: 0.0,
+            border_outline_color: [0.05, 0.05, 0.15, 1.0],
+            border_dash_len: 10.0,
+            border_dash_gap: 6.0,
+
+            shadow_offset_x: 4.0,
+            shadow_offset_y: 4.0,
+            shadow_blur: 8.0,
+            shadow_color: [0.0, 0.0, 0.0, 0.3],
+        }
+    }
+
+    fn build_shape(&self) -> iced_sdf::Sdf {
+        iced_sdf::Sdf::rounded_box([0.0, 0.0], [120.0, 80.0], self.corner_radius)
+    }
+
+    fn extra_shapes(&self) -> Vec<iced_sdf::Sdf> {
+        let count = (self.node_count as usize).saturating_sub(1).min(self.random_nodes.len());
+        self.random_nodes[..count]
+            .iter()
+            .map(|n| iced_sdf::Sdf::rounded_box(n.center, n.half_size, self.corner_radius))
+            .collect()
+    }
+
+    fn build_layer_groups(&self) -> Vec<(Vec<Layer>, bool)> {
+        let mut groups = Vec::new();
+
+        // Shadow
+        if self.shadow_visible && (self.shadow_blur > 0.01 || self.shadow_color[3] > 0.001) {
+            let mut layer = Layer::solid(color_from(self.shadow_color))
+                .expand(self.shadow_blur * 0.5)
+                .blur(self.shadow_blur);
+            if self.shadow_offset_x.abs() > 0.001 || self.shadow_offset_y.abs() > 0.001 {
+                layer = layer.offset(self.shadow_offset_x, self.shadow_offset_y);
+            }
+            groups.push((vec![layer], self.shadow_debug));
+        }
+
+        // Fill
+        if self.fill_visible {
+            let c = Color::from_rgba(
+                self.fill_color[0],
+                self.fill_color[1],
+                self.fill_color[2],
+                self.fill_color[3] * self.opacity,
+            );
+            groups.push((vec![Layer::solid(c)], self.fill_debug));
+        }
+
+        // Border
+        if self.border_visible && self.border_width > 0.01 {
+            let pattern = match self.border_pattern {
+                NodeBorderPattern::Solid => Pattern::solid(self.border_width),
+                NodeBorderPattern::Dashed => Pattern::dashed(
+                    self.border_width,
+                    self.border_dash_len,
+                    self.border_dash_gap,
+                ),
+            };
+            let mut border = Layer::stroke(color_from(self.border_color), pattern);
+            if self.border_outline_width > 0.01 {
+                border = border.outline(
+                    self.border_outline_width,
+                    color_from(self.border_outline_color),
+                );
+            }
+            groups.push((vec![border], self.border_debug));
+        }
+
+        groups
+    }
+
+    fn set_float(&mut self, param: NFloatParam, value: f32) {
+        match param {
+            NFloatParam::CornerRadius => self.corner_radius = value,
+            NFloatParam::Opacity => self.opacity = value,
+            NFloatParam::BorderWidth => self.border_width = value,
+            NFloatParam::BorderOutlineWidth => self.border_outline_width = value,
+            NFloatParam::BorderDashLen => self.border_dash_len = value,
+            NFloatParam::BorderDashGap => self.border_dash_gap = value,
+            NFloatParam::ShadowOffsetX => self.shadow_offset_x = value,
+            NFloatParam::ShadowOffsetY => self.shadow_offset_y = value,
+            NFloatParam::ShadowBlur => self.shadow_blur = value,
+        }
+    }
+
+    fn set_color_channel(&mut self, param: NColorParam, channel: usize, value: f32) {
+        let c = match param {
+            NColorParam::Fill => &mut self.fill_color,
+            NColorParam::Border => &mut self.border_color,
+            NColorParam::BorderOutline => &mut self.border_outline_color,
+            NColorParam::Shadow => &mut self.shadow_color,
+        };
+        if channel < 4 {
+            c[channel] = value;
+        }
+    }
+}
+
 struct EdgeEditorState {
     // Which color editors are expanded (collapsed by default)
     expanded_colors: HashSet<ColorParam>,
@@ -554,12 +780,21 @@ fn approx_bezier_arc_length() -> f32 {
     length
 }
 
-fn editor_for_selected(selected: usize) -> Option<EdgeEditorState> {
+enum EditorKind {
+    Edge(EdgeEditorState),
+    Node(NodeEditorState),
+}
+
+fn editor_for_selected(selected: usize) -> Option<EditorKind> {
     let entries = shapes::all_shapes();
-    entries
-        .get(selected)
-        .and_then(|e| PatternKind::from_slug(e.slug))
-        .map(EdgeEditorState::new)
+    let entry = entries.get(selected)?;
+    if let Some(kind) = PatternKind::from_slug(entry.slug) {
+        return Some(EditorKind::Edge(EdgeEditorState::new(kind)));
+    }
+    if entry.slug == "node_editor" {
+        return Some(EditorKind::Node(NodeEditorState::new()));
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -570,7 +805,7 @@ struct App {
     selected: usize,
     embed: bool,
     start_time: Instant,
-    editor: Option<EdgeEditorState>,
+    editor: Option<EditorKind>,
     #[cfg(not(target_arch = "wasm32"))]
     screenshot: ScreenshotHelper,
 }
@@ -586,6 +821,13 @@ enum Message {
     ToggleColorEditor(ColorParam),
     ToggleDebugLayer(LayerKind, bool),
     SetEdgeCount(u32),
+    SetNFloat(NFloatParam, f32),
+    SetNColorChannel(NColorParam, usize, f32),
+    ToggleNLayer(NLayerKind, bool),
+    ToggleNColorEditor(NColorParam),
+    ToggleNDebugLayer(NLayerKind, bool),
+    SetNodeCount(u32),
+    SetNodeBorderPattern(NodeBorderPattern),
     #[cfg(not(target_arch = "wasm32"))]
     Screenshot(demo_common::ScreenshotMessage),
 }
@@ -632,22 +874,22 @@ impl App {
                 self.editor = editor_for_selected(idx);
             }
             Message::SetPatternKind(kind) => {
-                if let Some(e) = &mut self.editor {
+                if let Some(EditorKind::Edge(e)) = &mut self.editor {
                     e.pattern_kind = kind;
                 }
             }
             Message::SetFloat(param, value) => {
-                if let Some(e) = &mut self.editor {
+                if let Some(EditorKind::Edge(e)) = &mut self.editor {
                     e.set_float(param, value);
                 }
             }
             Message::SetColorChannel(param, ch, value) => {
-                if let Some(e) = &mut self.editor {
+                if let Some(EditorKind::Edge(e)) = &mut self.editor {
                     e.set_color_channel(param, ch, value);
                 }
             }
             Message::ToggleLayer(kind, visible) => {
-                if let Some(e) = &mut self.editor {
+                if let Some(EditorKind::Edge(e)) = &mut self.editor {
                     match kind {
                         LayerKind::Shadow => e.shadow_visible = visible,
                         LayerKind::Border => e.border_visible = visible,
@@ -656,12 +898,12 @@ impl App {
                 }
             }
             Message::SetEdgeCount(count) => {
-                if let Some(e) = &mut self.editor {
+                if let Some(EditorKind::Edge(e)) = &mut self.editor {
                     e.edge_count = count;
                 }
             }
             Message::ToggleDebugLayer(kind, enabled) => {
-                if let Some(e) = &mut self.editor {
+                if let Some(EditorKind::Edge(e)) = &mut self.editor {
                     match kind {
                         LayerKind::Shadow => e.shadow_debug = enabled,
                         LayerKind::Border => e.border_debug = enabled,
@@ -670,10 +912,55 @@ impl App {
                 }
             }
             Message::ToggleColorEditor(param) => {
-                if let Some(e) = &mut self.editor
+                if let Some(EditorKind::Edge(e)) = &mut self.editor
                     && !e.expanded_colors.remove(&param)
                 {
                     e.expanded_colors.insert(param);
+                }
+            }
+            Message::SetNFloat(param, value) => {
+                if let Some(EditorKind::Node(n)) = &mut self.editor {
+                    n.set_float(param, value);
+                }
+            }
+            Message::SetNColorChannel(param, ch, value) => {
+                if let Some(EditorKind::Node(n)) = &mut self.editor {
+                    n.set_color_channel(param, ch, value);
+                }
+            }
+            Message::ToggleNLayer(kind, visible) => {
+                if let Some(EditorKind::Node(n)) = &mut self.editor {
+                    match kind {
+                        NLayerKind::Shadow => n.shadow_visible = visible,
+                        NLayerKind::Fill => n.fill_visible = visible,
+                        NLayerKind::Border => n.border_visible = visible,
+                    }
+                }
+            }
+            Message::ToggleNDebugLayer(kind, enabled) => {
+                if let Some(EditorKind::Node(n)) = &mut self.editor {
+                    match kind {
+                        NLayerKind::Shadow => n.shadow_debug = enabled,
+                        NLayerKind::Fill => n.fill_debug = enabled,
+                        NLayerKind::Border => n.border_debug = enabled,
+                    }
+                }
+            }
+            Message::ToggleNColorEditor(param) => {
+                if let Some(EditorKind::Node(n)) = &mut self.editor
+                    && !n.expanded_colors.remove(&param)
+                {
+                    n.expanded_colors.insert(param);
+                }
+            }
+            Message::SetNodeCount(count) => {
+                if let Some(EditorKind::Node(n)) = &mut self.editor {
+                    n.node_count = count;
+                }
+            }
+            Message::SetNodeBorderPattern(pat) => {
+                if let Some(EditorKind::Node(n)) = &mut self.editor {
+                    n.border_pattern = pat;
                 }
             }
             Message::Tick => {}
@@ -694,7 +981,7 @@ impl App {
 
         // Embed mode: only the SDF canvas, no sidebar or text
         if self.embed {
-            let sdf_view = widget::sdf_canvas(entry, elapsed, None, false, &[]);
+            let sdf_view = widget::sdf_canvas(entry, elapsed, None, false, &[], None);
             return container(sdf_view).width(Fill).height(Fill).into();
         }
 
@@ -734,15 +1021,23 @@ impl App {
             let title = text(entry.name).size(20);
             let description = text(entry.description).size(13);
 
-            let layer_groups = self.editor.as_ref().map(|e| e.build_layer_groups());
-            let extra_count = self.editor.as_ref().map_or(0, |e| {
-                // edge_count includes the 2 base edges, extras start at index 0
-                (e.edge_count as usize).saturating_sub(2).min(e.extra_edges.len())
-            });
-            let extra_shapes = self.editor.as_ref()
-                .map(|e| &e.extra_edges[..extra_count])
-                .unwrap_or(&[]);
-            let sdf_view = widget::sdf_canvas(entry, elapsed, layer_groups, false, extra_shapes);
+            let (layer_groups, extra_shapes_vec, shape_override) = match &self.editor {
+                Some(EditorKind::Edge(e)) => {
+                    let extra_count = (e.edge_count as usize).saturating_sub(2).min(e.extra_edges.len());
+                    (
+                        Some(e.build_layer_groups()),
+                        e.extra_edges[..extra_count].to_vec(),
+                        None,
+                    )
+                }
+                Some(EditorKind::Node(n)) => (
+                    Some(n.build_layer_groups()),
+                    n.extra_shapes(),
+                    Some(n.build_shape()),
+                ),
+                None => (None, vec![], None),
+            };
+            let sdf_view = widget::sdf_canvas(entry, elapsed, layer_groups, false, &extra_shapes_vec, shape_override);
 
             let mut content = column![title, description]
                 .spacing(8)
@@ -750,8 +1045,14 @@ impl App {
                 .width(Fill)
                 .height(Fill);
 
-            if let Some(editor) = &self.editor {
-                content = content.push(edge_editor_ui(editor));
+            match &self.editor {
+                Some(EditorKind::Edge(editor)) => {
+                    content = content.push(edge_editor_ui(editor));
+                }
+                Some(EditorKind::Node(editor)) => {
+                    content = content.push(node_editor_ui(editor));
+                }
+                None => {}
             }
 
             content.push(sdf_view)
@@ -904,6 +1205,184 @@ fn common_column(editor: &EdgeEditorState) -> Element<'static, Message> {
         .push(color_editor("End", editor.shadow_color_end, ColorParam::ShadowColorEnd, exp.contains(&ColorParam::ShadowColorEnd)));
 
     col.width(Fill).into()
+}
+
+// ---------------------------------------------------------------------------
+// Node editor UI (three-column layout)
+// ---------------------------------------------------------------------------
+
+fn node_editor_ui(editor: &NodeEditorState) -> Element<'static, Message> {
+    row![
+        scrollable(node_layers_column(editor)).height(220),
+        scrollable(node_fill_column(editor)).height(220),
+        scrollable(node_border_shadow_column(editor)).height(220),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn node_layers_column(editor: &NodeEditorState) -> Element<'static, Message> {
+    column![
+        section_header("Layers"),
+        node_layer_row("Shadow", editor.shadow_visible, NLayerKind::Shadow, editor.shadow_debug),
+        node_layer_row("Fill", editor.fill_visible, NLayerKind::Fill, editor.fill_debug),
+        node_layer_row("Border", editor.border_visible, NLayerKind::Border, editor.border_debug),
+        section_header("Nodes"),
+        row![
+            text(format!("{}", editor.node_count)).size(11).width(36),
+            slider(1.0..=100.0_f32, editor.node_count as f32, |v| Message::SetNodeCount(v as u32)).step(1.0),
+        ]
+        .spacing(4)
+        .align_y(Center),
+    ]
+    .spacing(4)
+    .width(180)
+    .into()
+}
+
+fn node_layer_row(name: &str, visible: bool, kind: NLayerKind, debug: bool) -> Element<'static, Message> {
+    row![
+        toggler(visible)
+            .label(name.to_string())
+            .on_toggle(move |v| Message::ToggleNLayer(kind, v))
+            .size(16)
+            .text_size(12),
+        toggler(debug)
+            .label("Tiles")
+            .on_toggle(move |v| Message::ToggleNDebugLayer(kind, v))
+            .size(14)
+            .text_size(10),
+    ]
+    .spacing(8)
+    .into()
+}
+
+fn node_fill_column(editor: &NodeEditorState) -> Element<'static, Message> {
+    let exp = &editor.expanded_colors;
+    column![
+        section_header("Fill"),
+        ncolor_editor("Color", editor.fill_color, NColorParam::Fill, exp.contains(&NColorParam::Fill)),
+        nfloat_slider("Radius", NFloatParam::CornerRadius, 0.0, 40.0, 0.5, editor.corner_radius),
+        nfloat_slider("Opacity", NFloatParam::Opacity, 0.0, 1.0, 0.01, editor.opacity),
+    ]
+    .spacing(3)
+    .width(Fill)
+    .into()
+}
+
+fn node_border_shadow_column(editor: &NodeEditorState) -> Element<'static, Message> {
+    let exp = &editor.expanded_colors;
+    let mut col = column![section_header("Border")].spacing(3);
+
+    col = col.push(
+        row![
+            text("Pattern").size(12).width(70),
+            pick_list(
+                NodeBorderPattern::ALL,
+                Some(editor.border_pattern),
+                Message::SetNodeBorderPattern,
+            )
+            .text_size(12),
+        ]
+        .spacing(4)
+        .align_y(Center),
+    );
+
+    col = col
+        .push(nfloat_slider("Width", NFloatParam::BorderWidth, 0.0, 10.0, 0.1, editor.border_width))
+        .push(ncolor_editor("Color", editor.border_color, NColorParam::Border, exp.contains(&NColorParam::Border)));
+
+    if editor.border_pattern == NodeBorderPattern::Dashed {
+        col = col
+            .push(nfloat_slider("Dash", NFloatParam::BorderDashLen, 1.0, 30.0, 0.5, editor.border_dash_len))
+            .push(nfloat_slider("Gap", NFloatParam::BorderDashGap, 1.0, 20.0, 0.5, editor.border_dash_gap));
+    }
+
+    col = col
+        .push(nfloat_slider("Outline", NFloatParam::BorderOutlineWidth, 0.0, 5.0, 0.1, editor.border_outline_width))
+        .push(ncolor_editor("Outline", editor.border_outline_color, NColorParam::BorderOutline, exp.contains(&NColorParam::BorderOutline)));
+
+    col = col.push(section_header("Shadow"));
+    col = col
+        .push(nfloat_slider("Offset X", NFloatParam::ShadowOffsetX, -20.0, 20.0, 0.5, editor.shadow_offset_x))
+        .push(nfloat_slider("Offset Y", NFloatParam::ShadowOffsetY, -20.0, 20.0, 0.5, editor.shadow_offset_y))
+        .push(nfloat_slider("Blur", NFloatParam::ShadowBlur, 0.0, 30.0, 0.5, editor.shadow_blur))
+        .push(ncolor_editor("Color", editor.shadow_color, NColorParam::Shadow, exp.contains(&NColorParam::Shadow)));
+
+    col.width(Fill).into()
+}
+
+fn nfloat_slider(
+    label: &str,
+    param: NFloatParam,
+    min: f32,
+    max: f32,
+    step: f32,
+    value: f32,
+) -> Element<'static, Message> {
+    let label = label.to_string();
+    let value_text = format!("{value:.1}");
+    row![
+        text(label).size(11).width(60),
+        slider(min..=max, value, move |v| Message::SetNFloat(param, v)).step(step),
+        text(value_text).size(11).width(36),
+    ]
+    .spacing(4)
+    .align_y(Center)
+    .into()
+}
+
+fn ncolor_editor(
+    label: &str,
+    rgba: [f32; 4],
+    param: NColorParam,
+    expanded: bool,
+) -> Element<'static, Message> {
+    let swatch = button(
+        container(text("").size(1))
+            .width(16)
+            .height(16)
+            .style(move |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(color_from(rgba))),
+                border: iced::Border {
+                    color: Color::from_rgb(0.5, 0.5, 0.5),
+                    width: 1.0,
+                    radius: 2.0.into(),
+                },
+                ..Default::default()
+            }),
+    )
+    .on_press(Message::ToggleNColorEditor(param))
+    .padding(0)
+    .style(button::text);
+
+    let header = row![
+        text(label.to_string()).size(11).width(60),
+        swatch,
+    ]
+    .spacing(4)
+    .align_y(Center);
+
+    if !expanded {
+        return header.into();
+    }
+
+    let channel_labels = ["R", "G", "B", "A"];
+    let mut sliders = column![].spacing(1);
+    for (i, ch_label) in channel_labels.iter().enumerate() {
+        let ch = i;
+        let val = rgba[i];
+        sliders = sliders.push(
+            row![
+                text(ch_label.to_string()).size(9).width(12),
+                slider(0.0..=1.0_f32, val, move |v| Message::SetNColorChannel(param, ch, v)).step(0.01),
+            ]
+            .spacing(2)
+            .align_y(Center),
+        );
+    }
+
+    column![header, sliders].spacing(2).into()
 }
 
 // ---------------------------------------------------------------------------

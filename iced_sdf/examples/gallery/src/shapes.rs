@@ -697,6 +697,22 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
             layers: || edge_layers(Pattern::solid(3.0)),
             extent: 140.0,
         },
+        // ================================================================
+        // Node Editor
+        // ================================================================
+        ShapeEntry {
+            name: "Node Editor",
+            description: "Interactive node with shadow, fill, and border controls.",
+            slug: "node_editor",
+            build: |_t| Sdf::rounded_box([0.0, 0.0], [120.0, 80.0], 8.0),
+            layers: || vec![
+                Layer::solid(Color::from_rgba(0.0, 0.0, 0.0, 0.3))
+                    .expand(4.0).blur(8.0).offset(4.0, 4.0),
+                Layer::solid(Color::from_rgba(0.14, 0.14, 0.16, 0.75)),
+                Layer::stroke(Color::from_rgb(0.20, 0.20, 0.22), Pattern::solid(1.0)),
+            ],
+            extent: 140.0,
+        },
     ]
 }
 
