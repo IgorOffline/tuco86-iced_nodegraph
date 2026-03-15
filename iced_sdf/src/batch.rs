@@ -6,7 +6,7 @@
 
 use crate::compile::compile_into;
 use crate::layer::Layer;
-use crate::pipeline::types::{ShapeInstance, SdfLayer, SdfOp};
+use crate::pipeline::types::{GpuVec4, ShapeInstance, SdfLayer, SdfOp};
 use crate::shape::Sdf;
 
 /// A collected batch of SDF shapes ready for GPU submission.
@@ -93,7 +93,7 @@ impl SdfBatch {
 
         let index = self.shapes.len();
         self.shapes.push(ShapeInstance {
-            bounds: glam::Vec4::new(bounds[0], bounds[1], bounds[2], bounds[3]),
+            bounds: GpuVec4::from(bounds),
             ops_offset,
             ops_count,
             layers_offset,

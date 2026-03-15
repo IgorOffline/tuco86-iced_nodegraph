@@ -5,7 +5,7 @@
 use iced::Color;
 
 use crate::pattern::Pattern;
-use crate::pipeline::types::SdfLayer;
+use crate::pipeline::types::{GpuVec2, GpuVec4, SdfLayer};
 
 /// Layer flags.
 const FLAG_GRADIENT: u32 = 1;
@@ -231,9 +231,9 @@ impl Layer {
             if self.gradient_along_u {
                 flags |= FLAG_GRADIENT_U;
             }
-            glam::Vec4::new(gc.r, gc.g, gc.b, gc.a)
+            GpuVec4::new(gc.r, gc.g, gc.b, gc.a)
         } else {
-            glam::Vec4::ZERO
+            GpuVec4::ZERO
         };
 
         // Pattern data
@@ -246,7 +246,7 @@ impl Layer {
             };
 
         SdfLayer {
-            color: glam::Vec4::new(self.color.r, self.color.g, self.color.b, self.color.a),
+            color: GpuVec4::new(self.color.r, self.color.g, self.color.b, self.color.a),
             gradient_color,
             expand: self.expand,
             blur: self.blur,
@@ -258,14 +258,14 @@ impl Layer {
             pattern_param1,
             pattern_param2,
             flow_speed,
-            outline_color: glam::Vec4::new(
+            outline_color: GpuVec4::new(
                 self.outline_color.r,
                 self.outline_color.g,
                 self.outline_color.b,
                 self.outline_color.a,
             ),
             outline_thickness: self.outline_thickness,
-            offset: glam::Vec2::new(self.offset[0], self.offset[1]),
+            offset: GpuVec2::new(self.offset[0], self.offset[1]),
         }
     }
 }
@@ -295,7 +295,7 @@ mod tests {
     fn test_solid_layer() {
         let layer = Layer::solid(Color::from_rgb(1.0, 0.0, 0.0));
         let gpu = layer.to_gpu();
-        assert_eq!(gpu.color.x, 1.0);
+        assert_eq!(gpu.color.0[0], 1.0);
         assert_eq!(gpu.flags, 0);
     }
 

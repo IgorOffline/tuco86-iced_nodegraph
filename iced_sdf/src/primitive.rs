@@ -35,6 +35,7 @@ pub fn sdf_stats() -> types::SdfStats {
     LAST_STATS.lock().unwrap().clone()
 }
 
+// Must match WGSL constants in pipeline/shader.wgsl
 const TILE_SIZE: f32 = 16.0;
 const MAX_SHAPES_PER_TILE: u32 = 16;
 
@@ -270,15 +271,15 @@ impl Primitive for SdfPrimitive {
             let has_fill = entry.layers.iter().any(|l| l.is_fill());
 
             let _ = pipeline.shapes_buffer.push(device, queue, types::ShapeInstance {
-                bounds: glam::Vec4::new(entry.bounds[0], entry.bounds[1], entry.bounds[2], entry.bounds[3]),
+                bounds: types::GpuVec4::from(entry.bounds),
                 ops_offset, ops_count, layers_offset, layers_count,
                 max_radius, has_fill: u32::from(has_fill), _pad2: 0, _pad3: 0,
             });
         }
 
         let shape_count = self.shapes.len() as u32;
-        let camera_pos = glam::Vec2::new(self.camera_position.0, self.camera_position.1);
-        let grid_origin = glam::Vec2::new(bounds.x * scale, bounds.y * scale);
+        let camera_pos = types::GpuVec2::new(self.camera_position.0, self.camera_position.1);
+        let grid_origin = types::GpuVec2::new(bounds.x * scale, bounds.y * scale);
         let grid_cols = ((bounds.width * scale / TILE_SIZE).ceil() as u32).max(1);
         let grid_rows = ((bounds.height * scale / TILE_SIZE).ceil() as u32).max(1);
 

@@ -7,6 +7,37 @@
 
 use encase::ShaderType;
 
+/// WGSL `vec2<f32>` for GPU buffer fields.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GpuVec2(pub [f32; 2]);
+
+/// WGSL `vec4<f32>` for GPU buffer fields.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GpuVec4(pub [f32; 4]);
+
+impl GpuVec2 {
+    pub const ZERO: Self = Self([0.0; 2]);
+    pub fn new(x: f32, y: f32) -> Self { Self([x, y]) }
+}
+
+impl GpuVec4 {
+    pub const ZERO: Self = Self([0.0; 4]);
+    pub fn new(x: f32, y: f32, z: f32, w: f32) -> Self { Self([x, y, z, w]) }
+}
+
+impl AsRef<[f32; 2]> for GpuVec2 { fn as_ref(&self) -> &[f32; 2] { &self.0 } }
+impl AsMut<[f32; 2]> for GpuVec2 { fn as_mut(&mut self) -> &mut [f32; 2] { &mut self.0 } }
+impl From<[f32; 2]> for GpuVec2 { fn from(v: [f32; 2]) -> Self { Self(v) } }
+
+impl AsRef<[f32; 4]> for GpuVec4 { fn as_ref(&self) -> &[f32; 4] { &self.0 } }
+impl AsMut<[f32; 4]> for GpuVec4 { fn as_mut(&mut self) -> &mut [f32; 4] { &mut self.0 } }
+impl From<[f32; 4]> for GpuVec4 { fn from(v: [f32; 4]) -> Self { Self(v) } }
+
+encase::impl_vector!(2, GpuVec2, f32; using AsRef AsMut From);
+encase::impl_vector!(4, GpuVec4, f32; using AsRef AsMut From);
+
 /// Per-draw parameters stored in a storage buffer.
 ///
 /// Indexed by `instance_index` in the fragment shader so each
@@ -14,9 +45,9 @@ use encase::ShaderType;
 #[derive(Clone, Debug, ShaderType)]
 pub struct DrawData {
     /// Widget bounds origin in physical pixels.
-    pub bounds_origin: glam::Vec2,
+    pub bounds_origin: GpuVec2,
     /// Camera position (pan offset).
-    pub camera_position: glam::Vec2,
+    pub camera_position: GpuVec2,
     /// Camera zoom factor.
     pub camera_zoom: f32,
     /// OS scale factor (logical to physical pixel ratio).
@@ -43,9 +74,9 @@ pub struct DrawData {
 #[derive(Clone, Debug, ShaderType)]
 pub struct ComputeUniforms {
     /// Widget bounds origin in physical pixels.
-    pub bounds_origin: glam::Vec2,
+    pub bounds_origin: GpuVec2,
     /// Camera position (pan offset).
-    pub camera_position: glam::Vec2,
+    pub camera_position: GpuVec2,
     /// Camera zoom factor.
     pub camera_zoom: f32,
     /// OS scale factor.
@@ -71,7 +102,7 @@ pub struct ComputeUniforms {
 #[derive(Clone, Copy, Debug, ShaderType)]
 pub struct ShapeInstance {
     /// Screen-space bounding box: (x, y, width, height).
-    pub bounds: glam::Vec4,
+    pub bounds: GpuVec4,
     /// Offset into the ops buffer for this shape's RPN operations.
     pub ops_offset: u32,
     /// Number of RPN operations for this shape.
@@ -105,17 +136,17 @@ pub struct SdfOp {
     pub _pad0: u32,
     pub _pad1: u32,
     /// Primary parameters (position, size, control points).
-    pub param0: glam::Vec4,
+    pub param0: GpuVec4,
     /// Secondary parameters.
-    pub param1: glam::Vec4,
+    pub param1: GpuVec4,
     /// Tertiary parameters (reserved).
-    pub param2: glam::Vec4,
+    pub param2: GpuVec4,
 }
 
 impl Default for ShapeInstance {
     fn default() -> Self {
         Self {
-            bounds: glam::Vec4::ZERO,
+            bounds: GpuVec4::ZERO,
             ops_offset: 0,
             ops_count: 0,
             layers_offset: 0,
@@ -135,9 +166,9 @@ impl Default for SdfOp {
             flags: 0,
             _pad0: 0,
             _pad1: 0,
-            param0: glam::Vec4::ZERO,
-            param1: glam::Vec4::ZERO,
-            param2: glam::Vec4::ZERO,
+            param0: GpuVec4::ZERO,
+            param1: GpuVec4::ZERO,
+            param2: GpuVec4::ZERO,
         }
     }
 }
@@ -149,9 +180,9 @@ impl Default for SdfOp {
 #[derive(Clone, Debug, ShaderType)]
 pub struct SdfLayer {
     /// Fill color (RGBA).
-    pub color: glam::Vec4,
+    pub color: GpuVec4,
     /// Gradient end color (if using gradient).
-    pub gradient_color: glam::Vec4,
+    pub gradient_color: GpuVec4,
     /// Expand/contract amount (positive = expand).
     pub expand: f32,
     /// Blur amount (gaussian blur radius).
@@ -176,18 +207,18 @@ pub struct SdfLayer {
     /// Flow animation speed (world units per second).
     pub flow_speed: f32,
     /// Outline color (RGBA). Outline is drawn at the boundary of the layer shape.
-    pub outline_color: glam::Vec4,
+    pub outline_color: GpuVec4,
     /// Outline thickness in world units (0 = no outline).
     pub outline_thickness: f32,
     /// Offset for shadow positioning (world units).
-    pub offset: glam::Vec2,
+    pub offset: GpuVec2,
 }
 
 impl Default for SdfLayer {
     fn default() -> Self {
         Self {
-            color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
-            gradient_color: glam::Vec4::ZERO,
+            color: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
+            gradient_color: GpuVec4::ZERO,
             expand: 0.0,
             blur: 0.0,
             gradient_angle: 0.0,
@@ -198,9 +229,9 @@ impl Default for SdfLayer {
             pattern_param1: 0.0,
             pattern_param2: 0.0,
             flow_speed: 0.0,
-            outline_color: glam::Vec4::ZERO,
+            outline_color: GpuVec4::ZERO,
             outline_thickness: 0.0,
-            offset: glam::Vec2::ZERO,
+            offset: GpuVec2::ZERO,
         }
     }
 }
@@ -208,8 +239,8 @@ impl Default for SdfLayer {
 impl Default for DrawData {
     fn default() -> Self {
         Self {
-            bounds_origin: glam::Vec2::ZERO,
-            camera_position: glam::Vec2::ZERO,
+            bounds_origin: GpuVec2::ZERO,
+            camera_position: GpuVec2::ZERO,
             camera_zoom: 1.0,
             scale_factor: 1.0,
             time: 0.0,
