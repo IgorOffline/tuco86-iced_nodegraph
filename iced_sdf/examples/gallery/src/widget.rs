@@ -15,21 +15,30 @@ const CURSOR_COLOR: Color = Color {
 };
 
 /// Create an SDF canvas element that renders a shape entry.
+///
+/// If `layer_groups` is provided, each group is rendered as a separate
+/// SdfPrimitive with its own debug_flags (for per-layer tile debug).
+/// `extra_shapes` are additional shapes rendered with the same layer groups.
 pub fn sdf_canvas<'a>(
     entry: &ShapeEntry,
     time: f32,
-    layer_override: Option<Vec<Layer>>,
+    layer_groups: Option<Vec<(Vec<Layer>, bool)>>,
     debug_tiles: bool,
+    extra_shapes: &[iced_sdf::Sdf],
 ) -> Element<'a, crate::Message> {
     let shape = (entry.build)(time);
-    let layers = layer_override.unwrap_or_else(|| (entry.layers)());
+
+    let groups = match layer_groups {
+        Some(g) => g,
+        None => vec![((entry.layers)(), debug_tiles)],
+    };
 
     let canvas = SdfCanvas {
         shape,
-        layers,
+        extra_shapes: extra_shapes.to_vec(),
+        layer_groups: groups,
         time,
         extent: entry.extent,
-        debug_tiles,
     };
 
     container(canvas)
@@ -39,13 +48,14 @@ pub fn sdf_canvas<'a>(
         .into()
 }
 
-/// Widget that renders a single SDF shape centered in its bounds.
+/// Widget that renders SDF shapes with per-group debug control.
 struct SdfCanvas {
     shape: iced_sdf::Sdf,
-    layers: Vec<Layer>,
+    extra_shapes: Vec<iced_sdf::Sdf>,
+    /// Each group: (layers, debug_enabled). Rendered as separate SdfPrimitive.
+    layer_groups: Vec<(Vec<Layer>, bool)>,
     time: f32,
     extent: f32,
-    debug_tiles: bool,
 }
 
 impl<Message, Renderer> iced::advanced::Widget<Message, Theme, Renderer> for SdfCanvas
@@ -91,14 +101,21 @@ where
         let cam_x = center_x / zoom;
         let cam_y = center_y / zoom;
 
-        let primitive = SdfPrimitive::single(self.shape.clone())
-            .layers(self.layers.clone())
-            .screen_bounds([bounds.x, bounds.y, bounds.width, bounds.height])
-            .camera(cam_x, cam_y, zoom)
-            .time(self.time)
-            .debug_tiles(self.debug_tiles);
-
-        renderer.draw_primitive(bounds, primitive);
+        // Render each layer group as a separate SdfPrimitive (for per-layer debug)
+        let sb = [bounds.x, bounds.y, bounds.width, bounds.height];
+        for (layers, debug) in &self.layer_groups {
+            let mut prim = SdfPrimitive::new();
+            // Primary shape
+            prim.push(&self.shape, layers, sb);
+            // Extra shapes (same layers, same bounds)
+            for extra in &self.extra_shapes {
+                prim.push(extra, layers, sb);
+            }
+            let prim = prim.camera(cam_x, cam_y, zoom)
+                .time(self.time)
+                .debug_tiles(*debug);
+            renderer.draw_primitive(bounds, prim);
+        }
 
         // Cursor distance overlay
         if let Some(pos) = cursor.position_over(bounds) {
@@ -110,9 +127,10 @@ where
 
             // Use the topmost layer's visual distance (stroke boundary, not raw SDF)
             let dist = self
-                .layers
+                .layer_groups
                 .last()
-                .map(|l| l.visual_distance(result.dist).abs())
+                .and_then(|(layers, _)| layers.last())
+                .map(|l: &Layer| l.visual_distance(result.dist).abs())
                 .unwrap_or(result.dist.abs());
 
             // Dot at cursor position (3px radius in screen space)

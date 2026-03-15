@@ -29,9 +29,14 @@ pub struct DrawData {
     pub grid_cols: u32,
     /// Tile grid rows for this draw.
     pub grid_rows: u32,
-    /// Offset into tile_counts/tile_shapes arrays.
+    /// Offset into tile_counts/tile_shapes (0xFFFFFFFF = no spatial index, use AABB).
     pub tile_base: u32,
+    /// First shape index (for AABB fallback path).
+    pub shape_start: u32,
+    /// Number of shapes (for AABB fallback path).
+    pub shape_count: u32,
     pub _pad0: u32,
+    pub _pad1: u32,
 }
 
 /// Compute shader uniforms for spatial index construction.
@@ -211,8 +216,11 @@ impl Default for DrawData {
             debug_flags: 0,
             grid_cols: 0,
             grid_rows: 0,
-            tile_base: 0,
+            tile_base: 0xFFFFFFFF, // no spatial index
+            shape_start: 0,
+            shape_count: 0,
             _pad0: 0,
+            _pad1: 0,
         }
     }
 }

@@ -87,8 +87,11 @@ struct DrawData {
     debug_flags: u32,
     grid_cols: u32,
     grid_rows: u32,
-    tile_base: u32,
+    tile_base: u32,       // 0xFFFFFFFF = no spatial index (AABB fallback)
+    shape_start: u32,
+    shape_count: u32,
     _pad0: u32,
+    _pad1: u32,
 }
 
 struct ComputeUniforms {
@@ -104,7 +107,7 @@ struct ComputeUniforms {
     shape_count: u32,
 }
 
-const MAX_SHAPES_PER_TILE: u32 = 64u;
+const MAX_SHAPES_PER_TILE: u32 = 16u;
 const TILE_SIZE: f32 = 16.0;
 
 struct ShapeInstance {
@@ -1195,7 +1198,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     current_scale_factor = draw.scale_factor;
     current_time = draw.time;
 
-    // Tile coordinates: subtract viewport origin to get local position
+    // Tile coordinates relative to this primitive's grid origin
     let local_px = screen_pos - draw.bounds_origin;
     let tile_col = u32(local_px.x / TILE_SIZE);
     let tile_row = u32(local_px.y / TILE_SIZE);
@@ -1204,18 +1207,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    let local_tile_idx = tile_row * draw.grid_cols + tile_col;
-    let tile_idx = draw.tile_base + local_tile_idx;
+    let tile_idx = draw.tile_base + tile_row * draw.grid_cols + tile_col;
     let count = tile_counts[tile_idx];
 
     if count == 0u {
+        if (draw.debug_flags & 1u) != 0u {
+            return vec4(0.0, 0.15, 0.0, 0.08);
+        }
         discard;
     }
 
-    // Convert fragment position to world coordinates
     let world_pos = screen_pos / (draw.camera_zoom * draw.scale_factor) - draw.camera_position;
-
-    // Composite shapes from spatial index
     var color = vec4(0.0);
     let base = tile_idx * MAX_SHAPES_PER_TILE;
 
@@ -1223,7 +1225,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let shape_idx = tile_shapes[base + i];
         let shape = shapes[shape_idx];
 
-        // Per-pixel AABB check
+        // Per-pixel AABB refinement
         let shape_min = shape.bounds.xy * current_scale_factor;
         let shape_max = (shape.bounds.xy + shape.bounds.zw) * current_scale_factor;
         if screen_pos.x < shape_min.x || screen_pos.x > shape_max.x ||
@@ -1232,8 +1234,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         let sdf = evaluate_sdf(world_pos, shape);
-
-        // Composite this shape's layers
         let end = shape.layers_offset + shape.layers_count;
         for (var j: u32 = shape.layers_offset; j < end; j++) {
             let layer = layers[j];
@@ -1243,6 +1243,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             }
             let layer_color = render_layer(layer_sdf, layer);
             color = color * (1.0 - layer_color.a) + layer_color;
+        }
+    }
+
+    // Debug: tile borders with shape count heat map
+    if (draw.debug_flags & 1u) != 0u {
+        let lx = local_px.x - f32(tile_col) * TILE_SIZE;
+        let ly = local_px.y - f32(tile_row) * TILE_SIZE;
+        let edge = min(min(lx, ly), min(TILE_SIZE - lx, TILE_SIZE - ly));
+        if edge < 1.0 {
+            let t = clamp(f32(count - 1u) / 9.0, 0.0, 1.0);
+            let ba = (1.0 - edge) * 0.7;
+            let bc = vec4(t, 1.0 - t, 0.0, ba);
+            color = color * (1.0 - bc.a) + bc;
         }
     }
 

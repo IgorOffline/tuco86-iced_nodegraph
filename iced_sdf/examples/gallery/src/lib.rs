@@ -219,7 +219,7 @@ enum ColorParam {
     ShadowColorEnd,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LayerKind {
     Shadow,
     Border,
@@ -234,6 +234,15 @@ struct EdgeEditorState {
     shadow_visible: bool,
     border_visible: bool,
     stroke_visible: bool,
+
+    // Per-layer debug
+    shadow_debug: bool,
+    border_debug: bool,
+    stroke_debug: bool,
+
+    // Extra edges
+    edge_count: u32,
+    extra_edges: Vec<iced_sdf::Sdf>,
 
     // Pattern selection
     pattern_kind: PatternKind,
@@ -287,14 +296,43 @@ struct EdgeEditorState {
     flow_speed: f32,
 }
 
+fn generate_random_edges(count: usize) -> Vec<iced_sdf::Sdf> {
+    let mut edges = Vec::with_capacity(count);
+    for i in 0..count {
+        // Simple deterministic pseudo-random based on index
+        let seed = (i + 7) as f32;
+        let x0 = ((seed * 131.7) % 400.0) - 200.0;
+        let y0 = ((seed * 97.3) % 300.0) - 150.0;
+        let x1 = ((seed * 173.1) % 400.0) - 200.0;
+        let y1 = ((seed * 59.9) % 300.0) - 150.0;
+        let offset = 40.0 + (seed * 23.7) % 60.0;
+        let fwd = iced_sdf::Sdf::bezier(
+            [x0, y0],
+            [x0 + offset, y0],
+            [x1 - offset, y1],
+            [x1, y1],
+        );
+        edges.push(fwd);
+    }
+    edges
+}
+
 impl EdgeEditorState {
     fn new(kind: PatternKind) -> Self {
+        let extra_edges = generate_random_edges(998);
         Self {
             expanded_colors: HashSet::new(),
 
             shadow_visible: true,
             border_visible: true,
             stroke_visible: true,
+
+            shadow_debug: false,
+            border_debug: false,
+            stroke_debug: false,
+
+            edge_count: 2,
+            extra_edges,
 
             pattern_kind: kind,
 
@@ -365,13 +403,10 @@ impl EdgeEditorState {
         }
     }
 
-    fn build_layers(&self) -> Vec<Layer> {
-        let mut layers = Vec::with_capacity(4);
-
-        // Approximate arc-length of the fixed bezier for gradient normalization.
-        // Control points: [-120,-40], [-40,-40], [40,40], [120,40]
+    /// Build layers split by group: (shadow, border_bg + border_stroke, stroke).
+    /// Each group gets its own SdfPrimitive so debug_flags can be set independently.
+    fn build_layer_groups(&self) -> Vec<(Vec<Layer>, bool)> {
         let arc_scale = 1.0 / approx_bezier_arc_length();
-
         let stroke_half = match self.pattern_kind {
             PatternKind::Dotted => self.dot_radius,
             PatternKind::DashDotted => (self.stroke_thickness * 0.5).max(self.dd_dot_radius),
@@ -379,53 +414,61 @@ impl EdgeEditorState {
         };
         let border_center = stroke_half + self.border_gap + self.border_thickness * 0.5;
         let border_outer = border_center + self.border_thickness * 0.5;
-
         let has_border = self.border_visible && self.border_thickness > 0.01;
+        let exp = &self.expanded_colors;
+        let _ = exp; // suppress unused warning
 
-        // Shadow - encompasses stroke + border, distance-based gradient
+        let mut groups: Vec<(Vec<Layer>, bool)> = Vec::new();
+
+        // Shadow group
         if self.shadow_visible
             && self.shadow_distance > 0.01
             && (self.shadow_color[3] > 0.001 || self.shadow_color_end[3] > 0.001)
         {
-            layers.push(
+            groups.push((vec![
                 Layer::gradient(
                     color_from(self.shadow_color),
                     color_from(self.shadow_color_end),
-                    0.0, // angle unused, distance-based via t = 1.0 - alpha
+                    0.0,
                 )
                 .expand(border_outer + self.shadow_distance)
                 .blur(self.shadow_distance)
                 .offset(self.shadow_offset_x, self.shadow_offset_y),
-            );
+            ], self.shadow_debug));
         }
 
-        // Border background (gap fill) - renders even when border_thickness=0
-        if self.border_visible && (self.border_background[3] > 0.001 || self.border_background_end[3] > 0.001) {
-            let bg = Layer::solid(color_from(self.border_background))
-                .expand(border_outer)
-                .gradient_color(color_from(self.border_background_end))
+        // Border group (background + stroke)
+        if self.border_visible {
+            let mut border_layers = Vec::new();
+            if self.border_background[3] > 0.001 || self.border_background_end[3] > 0.001 {
+                border_layers.push(
+                    Layer::solid(color_from(self.border_background))
+                        .expand(border_outer)
+                        .gradient_color(color_from(self.border_background_end))
+                        .gradient_along_u(true)
+                        .gradient_scale(arc_scale),
+                );
+            }
+            if has_border {
+                let mut border = Layer::stroke(
+                    color_from(self.border_color),
+                    Pattern::solid(self.border_thickness),
+                )
+                .expand(border_center)
+                .gradient_color(color_from(self.border_color_end))
                 .gradient_along_u(true)
                 .gradient_scale(arc_scale);
-            layers.push(bg);
-        }
-
-        // Border stroke - only when thickness > 0
-        if has_border {
-            let mut border = Layer::stroke(
-                color_from(self.border_color),
-                Pattern::solid(self.border_thickness),
-            )
-            .expand(border_center)
-            .gradient_color(color_from(self.border_color_end))
-            .gradient_along_u(true)
-            .gradient_scale(arc_scale);
-            if self.border_outline_thickness > 0.01 {
-                border = border.outline(self.border_outline_thickness, color_from(self.border_outline_color));
+                if self.border_outline_thickness > 0.01 {
+                    border = border.outline(self.border_outline_thickness, color_from(self.border_outline_color));
+                }
+                border_layers.push(border);
             }
-            layers.push(border);
+            if !border_layers.is_empty() {
+                groups.push((border_layers, self.border_debug));
+            }
         }
 
-        // Stroke
+        // Stroke group
         if self.stroke_visible {
             let mut stroke = Layer::stroke(color_from(self.stroke_color), self.build_pattern())
                 .gradient_color(color_from(self.stroke_color_end))
@@ -434,10 +477,10 @@ impl EdgeEditorState {
             if self.stroke_outline_thickness > 0.01 {
                 stroke = stroke.outline(self.stroke_outline_thickness, color_from(self.stroke_outline_color));
             }
-            layers.push(stroke);
+            groups.push((vec![stroke], self.stroke_debug));
         }
 
-        layers
+        groups
     }
 
     fn set_float(&mut self, param: FloatParam, value: f32) {
@@ -528,7 +571,6 @@ struct App {
     embed: bool,
     start_time: Instant,
     editor: Option<EdgeEditorState>,
-    debug_tiles: bool,
     #[cfg(not(target_arch = "wasm32"))]
     screenshot: ScreenshotHelper,
 }
@@ -542,7 +584,8 @@ enum Message {
     SetColorChannel(ColorParam, usize, f32),
     ToggleLayer(LayerKind, bool),
     ToggleColorEditor(ColorParam),
-    ToggleDebugTiles(bool),
+    ToggleDebugLayer(LayerKind, bool),
+    SetEdgeCount(u32),
     #[cfg(not(target_arch = "wasm32"))]
     Screenshot(demo_common::ScreenshotMessage),
 }
@@ -563,7 +606,6 @@ impl App {
                 embed,
                 start_time: Instant::now(),
                 editor,
-                debug_tiles: false,
                 #[cfg(not(target_arch = "wasm32"))]
                 screenshot: ScreenshotHelper::from_args(),
             },
@@ -613,8 +655,19 @@ impl App {
                     }
                 }
             }
-            Message::ToggleDebugTiles(enabled) => {
-                self.debug_tiles = enabled;
+            Message::SetEdgeCount(count) => {
+                if let Some(e) = &mut self.editor {
+                    e.edge_count = count;
+                }
+            }
+            Message::ToggleDebugLayer(kind, enabled) => {
+                if let Some(e) = &mut self.editor {
+                    match kind {
+                        LayerKind::Shadow => e.shadow_debug = enabled,
+                        LayerKind::Border => e.border_debug = enabled,
+                        LayerKind::Stroke => e.stroke_debug = enabled,
+                    }
+                }
             }
             Message::ToggleColorEditor(param) => {
                 if let Some(e) = &mut self.editor
@@ -641,7 +694,7 @@ impl App {
 
         // Embed mode: only the SDF canvas, no sidebar or text
         if self.embed {
-            let sdf_view = widget::sdf_canvas(entry, elapsed, None, false);
+            let sdf_view = widget::sdf_canvas(entry, elapsed, None, false, &[]);
             return container(sdf_view).width(Fill).height(Fill).into();
         }
 
@@ -681,8 +734,15 @@ impl App {
             let title = text(entry.name).size(20);
             let description = text(entry.description).size(13);
 
-            let layer_override = self.editor.as_ref().map(|e| e.build_layers());
-            let sdf_view = widget::sdf_canvas(entry, elapsed, layer_override, self.debug_tiles);
+            let layer_groups = self.editor.as_ref().map(|e| e.build_layer_groups());
+            let extra_count = self.editor.as_ref().map_or(0, |e| {
+                // edge_count includes the 2 base edges, extras start at index 0
+                (e.edge_count as usize).saturating_sub(2).min(e.extra_edges.len())
+            });
+            let extra_shapes = self.editor.as_ref()
+                .map(|e| &e.extra_edges[..extra_count])
+                .unwrap_or(&[]);
+            let sdf_view = widget::sdf_canvas(entry, elapsed, layer_groups, false, extra_shapes);
 
             let mut content = column![title, description]
                 .spacing(8)
@@ -691,7 +751,7 @@ impl App {
                 .height(Fill);
 
             if let Some(editor) = &self.editor {
-                content = content.push(edge_editor_ui(editor, self.debug_tiles));
+                content = content.push(edge_editor_ui(editor));
             }
 
             content.push(sdf_view)
@@ -705,8 +765,8 @@ impl App {
 // Edge editor UI (three-column layout)
 // ---------------------------------------------------------------------------
 
-fn edge_editor_ui(editor: &EdgeEditorState, debug_tiles: bool) -> Element<'static, Message> {
-    let col_layers = layers_column(editor, debug_tiles);
+fn edge_editor_ui(editor: &EdgeEditorState) -> Element<'static, Message> {
+    let col_layers = layers_column(editor);
     let col_stroke = stroke_column(editor);
     let col_common = common_column(editor);
 
@@ -719,33 +779,39 @@ fn edge_editor_ui(editor: &EdgeEditorState, debug_tiles: bool) -> Element<'stati
     .into()
 }
 
-fn layers_column(editor: &EdgeEditorState, debug_tiles: bool) -> Element<'static, Message> {
+fn layers_column(editor: &EdgeEditorState) -> Element<'static, Message> {
     column![
         section_header("Layers"),
-        toggler(editor.shadow_visible)
-            .label("Shadow")
-            .on_toggle(|v| Message::ToggleLayer(LayerKind::Shadow, v))
-            .size(16)
-            .text_size(12),
-        toggler(editor.border_visible)
-            .label("Border")
-            .on_toggle(|v| Message::ToggleLayer(LayerKind::Border, v))
-            .size(16)
-            .text_size(12),
-        toggler(editor.stroke_visible)
-            .label("Stroke")
-            .on_toggle(|v| Message::ToggleLayer(LayerKind::Stroke, v))
-            .size(16)
-            .text_size(12),
-        section_header("Debug"),
-        toggler(debug_tiles)
-            .label("Tile Culling")
-            .on_toggle(Message::ToggleDebugTiles)
-            .size(16)
-            .text_size(12),
+        layer_row("Shadow", editor.shadow_visible, LayerKind::Shadow, editor.shadow_debug),
+        layer_row("Border", editor.border_visible, LayerKind::Border, editor.border_debug),
+        layer_row("Stroke", editor.stroke_visible, LayerKind::Stroke, editor.stroke_debug),
+        section_header("Edges"),
+        row![
+            text(format!("{}", editor.edge_count)).size(11).width(36),
+            slider(2.0..=1000.0_f32, editor.edge_count as f32, |v| Message::SetEdgeCount(v as u32)).step(1.0),
+        ]
+        .spacing(4)
+        .align_y(Center),
     ]
     .spacing(4)
-    .width(130)
+    .width(180)
+    .into()
+}
+
+fn layer_row(name: &str, visible: bool, kind: LayerKind, debug: bool) -> Element<'static, Message> {
+    row![
+        toggler(visible)
+            .label(name.to_string())
+            .on_toggle(move |v| Message::ToggleLayer(kind, v))
+            .size(16)
+            .text_size(12),
+        toggler(debug)
+            .label("Tiles")
+            .on_toggle(move |v| Message::ToggleDebugLayer(kind, v))
+            .size(14)
+            .text_size(10),
+    ]
+    .spacing(8)
     .into()
 }
 

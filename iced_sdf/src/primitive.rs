@@ -36,7 +36,7 @@ pub fn sdf_stats() -> types::SdfStats {
 }
 
 const TILE_SIZE: f32 = 16.0;
-const MAX_SHAPES_PER_TILE: u32 = 64;
+const MAX_SHAPES_PER_TILE: u32 = 16;
 
 #[derive(Debug, Clone)]
 struct ShapeEntry {
@@ -277,13 +277,12 @@ impl Primitive for SdfPrimitive {
         }
 
         let shape_count = self.shapes.len() as u32;
-        let bounds_origin = glam::Vec2::new(bounds.x * scale, bounds.y * scale);
-        let viewport_width = bounds.width * scale;
-        let viewport_height = bounds.height * scale;
-        let grid_cols = ((viewport_width / TILE_SIZE).ceil() as u32).max(1);
-        let grid_rows = ((viewport_height / TILE_SIZE).ceil() as u32).max(1);
+        let camera_pos = glam::Vec2::new(self.camera_position.0, self.camera_position.1);
+        let grid_origin = glam::Vec2::new(bounds.x * scale, bounds.y * scale);
+        let grid_cols = ((bounds.width * scale / TILE_SIZE).ceil() as u32).max(1);
+        let grid_rows = ((bounds.height * scale / TILE_SIZE).ceil() as u32).max(1);
 
-        // Allocate tile region for this prepare scope
+        // Allocate tile region
         let tile_base = pipeline.total_tiles;
         pipeline.total_tiles += grid_cols * grid_rows;
 
@@ -297,30 +296,27 @@ impl Primitive for SdfPrimitive {
             pipeline.spatial_index_gen += 1;
         }
 
-        // Write compute uniforms for this scope
+        // Write compute uniforms
         let cu = types::ComputeUniforms {
-            bounds_origin,
-            camera_position: glam::Vec2::new(self.camera_position.0, self.camera_position.1),
-            camera_zoom: self.camera_zoom,
-            scale_factor: scale,
+            bounds_origin: grid_origin,
+            camera_position: camera_pos,
+            camera_zoom: self.camera_zoom, scale_factor: scale,
             grid_cols, grid_rows,
-            tile_size: TILE_SIZE,
-            tile_base, shape_start, shape_count,
+            tile_size: TILE_SIZE, tile_base, shape_start, shape_count,
         };
         pipeline.compute_uniform_scratch.clear();
         let mut w = encase::UniformBuffer::new(&mut pipeline.compute_uniform_scratch);
         w.write(&cu).expect("Failed to write compute uniforms");
         queue.write_buffer(&pipeline.compute_uniform_buffer, 0, &pipeline.compute_uniform_scratch);
 
-        // Push DrawData for this draw
+        // Push DrawData
         let _ = pipeline.draw_data_buffer.push(device, queue, types::DrawData {
-            bounds_origin,
-            camera_position: glam::Vec2::new(self.camera_position.0, self.camera_position.1),
-            camera_zoom: self.camera_zoom,
-            scale_factor: scale,
-            time: self.time,
-            debug_flags: self.debug_flags,
-            grid_cols, grid_rows, tile_base, _pad0: 0,
+            bounds_origin: grid_origin,
+            camera_position: camera_pos,
+            camera_zoom: self.camera_zoom, scale_factor: scale,
+            time: self.time, debug_flags: self.debug_flags,
+            grid_cols, grid_rows, tile_base,
+            shape_start: 0, shape_count: 0, _pad0: 0, _pad1: 0,
         });
 
         // Recreate bind groups if any buffer changed
@@ -348,7 +344,7 @@ impl Primitive for SdfPrimitive {
             pipeline.bind_group_gens = gens;
         }
 
-        // Dispatch compute for this prepare scope
+        // Dispatch compute
         let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
             label: Some("sdf_compute"),
         });
