@@ -22,6 +22,7 @@ pub struct EdgeSections {
     pub pattern: bool,
     pub border: bool,
     pub shadow: bool,
+    pub debug: bool,
 }
 
 impl EdgeSections {
@@ -31,6 +32,7 @@ impl EdgeSections {
             pattern: true,
             border: true,
             shadow: true,
+            debug: false,
         }
     }
 }
@@ -42,6 +44,7 @@ pub enum EdgeSection {
     Pattern,
     Border,
     Shadow,
+    Debug,
 }
 
 /// Pattern type for simple selection (maps to iced_sdf::Pattern)
@@ -102,6 +105,9 @@ pub struct EdgeConfigInputs {
     pub shadow_color_end: Option<Color>,
     pub shadow_offset_x: Option<f32>,
     pub shadow_offset_y: Option<f32>,
+
+    // --- Debug ---
+    pub tile_debug: bool,
 }
 
 impl EdgeConfigInputs {
@@ -469,6 +475,23 @@ where
                 pin!(Left, pins::config::SHADOW_OFFSET_Y, text("s.off.y").size(10), Input, pins::Float, colors::PIN_NUMBER),
                 value_display(fmt_float(inputs.shadow_offset_y, 1)),
             ).into(),
+        ],
+    );
+
+    // --- Debug section ---
+    push_section(
+        &mut items,
+        "Debug",
+        sections.debug,
+        on_toggle(EdgeSection::Debug),
+        None,
+        vec![
+            row![
+                text("tile debug").size(10).width(Length::Fill),
+                text(if inputs.tile_debug { "ON" } else { "off" }).size(10),
+            ]
+            .align_y(iced::Alignment::Center)
+            .into(),
         ],
     );
 

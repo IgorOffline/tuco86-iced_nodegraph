@@ -304,6 +304,8 @@ pub struct NodeGraph<
     /// When set, replaces the built-in TypeId matching in `compute_valid_targets`.
     /// Direction checks still apply before this callback is called.
     pub(super) can_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> bool + 'a>>,
+    /// Enable SDF tile debug visualization on edge primitives.
+    pub(super) debug_tiles: bool,
     /// Phantom data for unused type parameter (E is only used in callbacks)
     _phantom: PhantomData<E>,
 }
@@ -345,6 +347,7 @@ where
             cutting_tool_style_fn: None,
             initial_camera: None,
             can_connect: None,
+            debug_tiles: false,
             _phantom: PhantomData,
         }
     }
@@ -556,6 +559,12 @@ where
     /// When not set, pins connect only if they share the same `data_type::<T>()`.
     pub fn can_connect(mut self, f: impl Fn(PinRef<N, P>, PinRef<N, P>) -> bool + 'a) -> Self {
         self.can_connect = Some(Box::new(f));
+        self
+    }
+
+    /// Enables SDF tile debug visualization on edge primitives.
+    pub fn debug_tiles(mut self, enabled: bool) -> Self {
+        self.debug_tiles = enabled;
         self
     }
 

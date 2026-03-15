@@ -58,6 +58,22 @@ fn color_with_opacity(c: Color, opacity: f32) -> Color {
 ///
 /// Formula: screen = (world + camera_position) * zoom
 /// Returns [x, y, width, height] in screen pixels.
+/// Clip shape screen bounds to a layout rectangle.
+/// Returns `None` if the shape is entirely off-screen (no intersection).
+fn clipped_shape_bounds(b: [f32; 4], clip: Rectangle) -> Option<Rectangle> {
+    let x0 = b[0].max(clip.x);
+    let y0 = b[1].max(clip.y);
+    let x1 = (b[0] + b[2]).min(clip.x + clip.width);
+    let y1 = (b[1] + b[3]).min(clip.y + clip.height);
+    if x1 <= x0 || y1 <= y0 {
+        return None; // fully off-screen
+    }
+    Some(Rectangle::new(
+        Point::new(x0, y0),
+        Size::new(x1 - x0, y1 - y0),
+    ))
+}
+
 fn world_bbox_to_screen_bounds(
     x0: f32,
     y0: f32,
@@ -194,8 +210,8 @@ fn resolve_edge_color(color: iced::Color, pin_color: iced::Color) -> iced::Color
     if color.a > 0.01 { color } else { pin_color }
 }
 
-/// Build SDF layers from an EdgeStyle, resolving pin color inheritance.
-fn edge_sdf_layers(
+/// Build stroke-only SDF layers for a single edge (per-edge colors preserved).
+fn edge_stroke_layers(
     style: &crate::style::EdgeStyle,
     start_pin_color: iced::Color,
     end_pin_color: iced::Color,
@@ -203,73 +219,16 @@ fn edge_sdf_layers(
     end_direction: PinDirection,
     arc_length: f32,
 ) -> Vec<Layer> {
-    let mut layers = Vec::with_capacity(4);
     let gradient_scale = if arc_length > 0.001 {
         1.0 / arc_length
     } else {
         0.01
     };
-
-    // Determine if edge is "reversed" (from Input to Output)
     let is_reversed = matches!(
         (start_direction, end_direction),
         (PinDirection::Input, PinDirection::Output)
     );
 
-    // Shadow layer (behind everything)
-    if let Some(shadow) = &style.shadow
-        && (shadow.color.a > 0.0 || shadow.end_color.a > 0.0)
-    {
-        let mut layer = Layer::gradient_u(shadow.color, shadow.end_color)
-            .gradient_scale(gradient_scale)
-            .expand(shadow.expand)
-            .blur(shadow.blur);
-        if shadow.offset != (0.0, 0.0) {
-            layer = layer.offset(shadow.offset.0, shadow.offset.1);
-        }
-        layers.push(layer);
-    }
-
-    // Border layers (behind stroke)
-    if let Some(border) = &style.border
-        && border.width > 0.0
-    {
-        let border_center = style.pattern.thickness * 0.5 + border.gap + border.width * 0.5;
-        let border_outer = border_center + border.width * 0.5;
-
-        // Border background fill (gap area)
-        if border.background.a > 0.0 || border.background_end.a > 0.0 {
-            let (bg0, bg1) = if is_reversed {
-                (border.background_end, border.background)
-            } else {
-                (border.background, border.background_end)
-            };
-            layers.push(
-                Layer::gradient_u(bg0, bg1)
-                    .gradient_scale(gradient_scale)
-                    .expand(border_outer),
-            );
-        }
-
-        // Border stroke
-        let border_start = resolve_edge_color(border.start_color, start_pin_color);
-        let border_end = resolve_edge_color(border.end_color, end_pin_color);
-        let (c0, c1) = if is_reversed {
-            (border_end, border_start)
-        } else {
-            (border_start, border_end)
-        };
-        let mut layer = Layer::gradient_u(c0, c1)
-            .gradient_scale(gradient_scale)
-            .with_pattern(Pattern::solid(border.width))
-            .expand(border_center);
-        if let Some((w, c)) = border.outline {
-            layer = layer.outline(w, c);
-        }
-        layers.push(layer);
-    }
-
-    // Stroke layer (front)
     let stroke_start = resolve_edge_color(style.start_color, start_pin_color);
     let stroke_end = resolve_edge_color(style.end_color, end_pin_color);
     let (c0, c1) = if is_reversed {
@@ -293,7 +252,129 @@ fn edge_sdf_layers(
     if let Some((w, c)) = style.stroke_outline {
         stroke_layer = stroke_layer.outline(w, c);
     }
-    layers.push(stroke_layer);
+    vec![stroke_layer]
+}
+
+/// Build all SDF layers for a standalone edge (shadow + border + stroke).
+/// Used for the dragging edge preview which is not part of the merged batch.
+fn edge_all_layers(
+    style: &crate::style::EdgeStyle,
+    start_pin_color: iced::Color,
+    end_pin_color: iced::Color,
+    start_direction: PinDirection,
+    end_direction: PinDirection,
+    arc_length: f32,
+) -> Vec<Layer> {
+    let gradient_scale = if arc_length > 0.001 {
+        1.0 / arc_length
+    } else {
+        0.01
+    };
+    let is_reversed = matches!(
+        (start_direction, end_direction),
+        (PinDirection::Input, PinDirection::Output)
+    );
+
+    let mut layers = Vec::with_capacity(4);
+
+    // Shadow
+    if let Some(shadow) = &style.shadow
+        && (shadow.color.a > 0.0 || shadow.end_color.a > 0.0)
+    {
+        let mut layer = Layer::gradient_u(shadow.color, shadow.end_color)
+            .gradient_scale(gradient_scale)
+            .expand(shadow.expand)
+            .blur(shadow.blur);
+        if shadow.offset != (0.0, 0.0) {
+            layer = layer.offset(shadow.offset.0, shadow.offset.1);
+        }
+        layers.push(layer);
+    }
+
+    // Border
+    if let Some(border) = &style.border
+        && border.width > 0.0
+    {
+        let border_center = style.pattern.thickness * 0.5 + border.gap + border.width * 0.5;
+        let border_outer = border_center + border.width * 0.5;
+
+        if border.background.a > 0.0 || border.background_end.a > 0.0 {
+            let (bg0, bg1) = if is_reversed {
+                (border.background_end, border.background)
+            } else {
+                (border.background, border.background_end)
+            };
+            layers.push(
+                Layer::gradient_u(bg0, bg1)
+                    .gradient_scale(gradient_scale)
+                    .expand(border_outer),
+            );
+        }
+
+        let border_start = resolve_edge_color(border.start_color, start_pin_color);
+        let border_end = resolve_edge_color(border.end_color, end_pin_color);
+        let (c0, c1) = if is_reversed {
+            (border_end, border_start)
+        } else {
+            (border_start, border_end)
+        };
+        let mut layer = Layer::gradient_u(c0, c1)
+            .gradient_scale(gradient_scale)
+            .with_pattern(Pattern::solid(border.width))
+            .expand(border_center);
+        if let Some((w, c)) = border.outline {
+            layer = layer.outline(w, c);
+        }
+        layers.push(layer);
+    }
+
+    // Stroke
+    layers.extend(edge_stroke_layers(
+        style, start_pin_color, end_pin_color,
+        start_direction, end_direction, arc_length,
+    ));
+
+    layers
+}
+
+/// Build shadow + border layers for the merged edge union shape.
+/// Uses solid colors (no per-edge gradients) since the union has no directional arc.
+fn merged_edge_border_layers(style: &crate::style::EdgeStyle) -> Vec<Layer> {
+    let mut layers = Vec::with_capacity(3);
+
+    // Shadow
+    if let Some(shadow) = &style.shadow
+        && (shadow.color.a > 0.0 || shadow.end_color.a > 0.0)
+    {
+        let mut layer = Layer::solid(shadow.color)
+            .expand(shadow.expand)
+            .blur(shadow.blur);
+        if shadow.offset != (0.0, 0.0) {
+            layer = layer.offset(shadow.offset.0, shadow.offset.1);
+        }
+        layers.push(layer);
+    }
+
+    // Border
+    if let Some(border) = &style.border
+        && border.width > 0.0
+    {
+        let border_center = style.pattern.thickness * 0.5 + border.gap + border.width * 0.5;
+        let border_outer = border_center + border.width * 0.5;
+
+        // Background fill
+        if border.background.a > 0.0 {
+            layers.push(Layer::solid(border.background).expand(border_outer));
+        }
+
+        // Border stroke
+        let mut layer = Layer::stroke(border.start_color, Pattern::solid(border.width))
+            .expand(border_center);
+        if let Some((w, c)) = border.outline {
+            layer = layer.outline(w, c);
+        }
+        layers.push(layer);
+    }
 
     layers
 }
@@ -543,11 +624,20 @@ where
         // Layer 2: Edges (batched into single draw call)
         // ========================================
         let edge_batch = {
-            let mut batch = SdfPrimitive::with_capacity(self.edges.len());
             let pending_cuts = match &state.dragging {
                 Dragging::EdgeCutting { pending_cuts, .. } => Some(pending_cuts),
                 _ => None,
             };
+
+            // First pass: collect per-edge data
+            struct EdgeData {
+                shape: iced_sdf::Sdf,
+                stroke_layers: Vec<Layer>,
+                bounds: [f32; 4],
+            }
+            let mut edge_entries = Vec::with_capacity(self.edges.len());
+            let mut border_style: Option<crate::style::EdgeStyle> = None;
+            let mut union_shape: Option<iced_sdf::Sdf> = None;
 
             for (edge_idx, (from, to, edge_config)) in self.edges.iter().enumerate() {
                 let Some(from_node_idx) = self.id_maps.nodes.index(&from.node_id) else {
@@ -611,7 +701,24 @@ where
                 let arc_len = estimate_edge_arc_length(
                     &start_pos, &end_pos, from_side, to_side, &edge_style.curve,
                 );
-                let sdf_layers = edge_sdf_layers(
+                let shape = edge_sdf(&start_pos, &end_pos, from_side, to_side, &edge_style.curve);
+                let bounds = edge_screen_bounds(
+                    &start_pos, &end_pos, from_side, to_side, &edge_style.curve,
+                    &edge_style, &render_context,
+                );
+
+                // Accumulate union for merged border
+                union_shape = Some(match union_shape.take() {
+                    Some(acc) => acc | shape.clone(),
+                    None => shape.clone(),
+                });
+                if border_style.is_none()
+                    && (edge_style.border.is_some() || edge_style.shadow.is_some())
+                {
+                    border_style = Some(edge_style);
+                }
+
+                let stroke_layers = edge_stroke_layers(
                     &edge_style,
                     from_pin_state.color,
                     to_pin_state.color,
@@ -619,14 +726,38 @@ where
                     to_pin_state.direction,
                     arc_len,
                 );
-                let shape = edge_sdf(&start_pos, &end_pos, from_side, to_side, &edge_style.curve);
-                let bounds = edge_screen_bounds(
-                    &start_pos, &end_pos, from_side, to_side, &edge_style.curve,
-                    &edge_style, &render_context,
-                );
 
-                batch.push(&shape, &sdf_layers, bounds);
+                edge_entries.push(EdgeData { shape, stroke_layers, bounds });
             }
+
+            // Build batch: merged border first, then per-edge strokes
+            let mut batch = SdfPrimitive::with_capacity(edge_entries.len() + 1);
+
+            // Merged shadow + border on the union shape
+            if let (Some(union), Some(style)) = (&union_shape, &border_style) {
+                let border_layers = merged_edge_border_layers(style);
+                if !border_layers.is_empty() {
+                    // Union bounds: encompass all edges
+                    let mut u_min_x = f32::MAX;
+                    let mut u_min_y = f32::MAX;
+                    let mut u_max_x = f32::MIN;
+                    let mut u_max_y = f32::MIN;
+                    for e in &edge_entries {
+                        u_min_x = u_min_x.min(e.bounds[0]);
+                        u_min_y = u_min_y.min(e.bounds[1]);
+                        u_max_x = u_max_x.max(e.bounds[0] + e.bounds[2]);
+                        u_max_y = u_max_y.max(e.bounds[1] + e.bounds[3]);
+                    }
+                    let union_bounds = [u_min_x, u_min_y, u_max_x - u_min_x, u_max_y - u_min_y];
+                    batch.push(union, &border_layers, union_bounds);
+                }
+            }
+
+            // Per-edge strokes
+            for e in &edge_entries {
+                batch.push(&e.shape, &e.stroke_layers, e.bounds);
+            }
+
             batch
         };
 
@@ -641,7 +772,8 @@ where
                             render_context.camera_position.y,
                             render_context.camera_zoom,
                         )
-                        .time(render_context.time),
+                        .time(render_context.time)
+                        .debug_tiles(self.debug_tiles),
                 );
             }
 
@@ -683,7 +815,7 @@ where
                     let arc_len = estimate_edge_arc_length(
                         &start_pos, &end_pos, from_side, end_side, &drag_edge_style.curve,
                     );
-                    let sdf_layers = edge_sdf_layers(
+                    let sdf_layers = edge_all_layers(
                         &drag_edge_style,
                         from_pin_state.color,
                         from_pin_state.color,
@@ -831,24 +963,26 @@ where
             let cam_zoom = render_context.camera_zoom;
 
             // Layer 4a: Node Fill
-            renderer.with_layer(layout.bounds(), |renderer| {
-                let fill_pad = 2.0 / cam_zoom;
-                let fb = world_bbox_to_screen_bounds(
-                    node_position.x, node_position.y,
-                    node_position.x + node_size.width, node_position.y + node_size.height,
-                    fill_pad, &render_context,
-                );
-                renderer.draw_primitive(
-                    layout.bounds(),
-                    SdfPrimitive::single(Sdf::rounded_box(node_center, node_half_size, corner_radius))
-                        .layers(vec![
-                            Layer::solid(color_with_opacity(resolved.fill_color, opacity)),
-                        ])
-                        .screen_bounds(fb)
-                        .camera(cam_x, cam_y, cam_zoom)
-                        .time(render_context.time),
-                );
-            });
+            let fill_pad = 2.0 / cam_zoom;
+            let fb = world_bbox_to_screen_bounds(
+                node_position.x, node_position.y,
+                node_position.x + node_size.width, node_position.y + node_size.height,
+                fill_pad, &render_context,
+            );
+            if let Some(fill_clip) = clipped_shape_bounds(fb, layout.bounds()) {
+                renderer.with_layer(layout.bounds(), |renderer| {
+                    renderer.draw_primitive(
+                        fill_clip,
+                        SdfPrimitive::single(Sdf::rounded_box(node_center, node_half_size, corner_radius))
+                            .layers(vec![
+                                Layer::solid(color_with_opacity(resolved.fill_color, opacity)),
+                            ])
+                            .screen_bounds(fb)
+                            .camera(cam_x, cam_y, cam_zoom)
+                            .time(render_context.time),
+                    );
+                });
+            }
 
             // Layer 4b: Node Widgets
             renderer.with_layer(layout.bounds(), |renderer| {
@@ -890,6 +1024,10 @@ where
 
             if has_border || has_pins {
                 let mut fg_batch = SdfPrimitive::with_capacity(pins.len() + 1);
+                let mut fg_min_x = f32::MAX;
+                let mut fg_min_y = f32::MAX;
+                let mut fg_max_x = f32::MIN;
+                let mut fg_max_y = f32::MIN;
 
                 // Border
                 if let Some(node_border) = &resolved.border {
@@ -922,6 +1060,10 @@ where
 
                         let border_shape = Sdf::rounded_box(node_center, node_half_size, corner_radius).onion(bw * 0.5);
                         fg_batch.push(&border_shape, &border_layers, bb);
+                        fg_min_x = fg_min_x.min(bb[0]);
+                        fg_min_y = fg_min_y.min(bb[1]);
+                        fg_max_x = fg_max_x.max(bb[0] + bb[2]);
+                        fg_max_y = fg_max_y.max(bb[1] + bb[3]);
                     }
                 }
 
@@ -969,16 +1111,25 @@ where
                     );
 
                     fg_batch.push(&pin_shape, &pin_layers, pin_bounds);
+                    fg_min_x = fg_min_x.min(pin_bounds[0]);
+                    fg_min_y = fg_min_y.min(pin_bounds[1]);
+                    fg_max_x = fg_max_x.max(pin_bounds[0] + pin_bounds[2]);
+                    fg_max_y = fg_max_y.max(pin_bounds[1] + pin_bounds[3]);
                 }
 
-                renderer.with_layer(layout.bounds(), |renderer| {
-                    renderer.draw_primitive(
-                        layout.bounds(),
-                        fg_batch
-                            .camera(cam_x, cam_y, cam_zoom)
-                            .time(render_context.time),
-                    );
-                });
+                if let Some(fg_clip) = clipped_shape_bounds(
+                    [fg_min_x, fg_min_y, fg_max_x - fg_min_x, fg_max_y - fg_min_y],
+                    layout.bounds(),
+                ) {
+                    renderer.with_layer(layout.bounds(), |renderer| {
+                        renderer.draw_primitive(
+                            fg_clip,
+                            fg_batch
+                                .camera(cam_x, cam_y, cam_zoom)
+                                .time(render_context.time),
+                        );
+                    });
+                }
             }
         }
 
@@ -1031,9 +1182,15 @@ where
                 )
                 .time(render_context.time);
 
-            renderer.with_layer(layout.bounds(), |renderer| {
-                renderer.draw_primitive(layout.bounds(), select_primitive);
-            });
+            let select_bounds = world_bbox_to_screen_bounds(
+                start.x, start.y, cursor_world.x, cursor_world.y,
+                border_width + 2.0 / camera.zoom(), &render_context,
+            );
+            if let Some(select_clip) = clipped_shape_bounds(select_bounds, layout.bounds()) {
+                renderer.with_layer(layout.bounds(), |renderer| {
+                    renderer.draw_primitive(select_clip, select_primitive);
+                });
+            }
         }
 
         // ========================================
@@ -1074,9 +1231,15 @@ where
             )
             .time(render_context.time);
 
-            renderer.with_layer(layout.bounds(), |renderer| {
-                renderer.draw_primitive(layout.bounds(), cutting_primitive);
-            });
+            let cutting_bounds = world_bbox_to_screen_bounds(
+                start.x, start.y, cursor_world.x, cursor_world.y,
+                EDGE_CUT_LINE_WIDTH + 2.0 / render_context.camera_zoom, &render_context,
+            );
+            if let Some(cutting_clip) = clipped_shape_bounds(cutting_bounds, layout.bounds()) {
+                renderer.with_layer(layout.bounds(), |renderer| {
+                    renderer.draw_primitive(cutting_clip, cutting_primitive);
+                });
+            }
         }
     }
 

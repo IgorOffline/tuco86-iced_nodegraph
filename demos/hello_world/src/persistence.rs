@@ -51,6 +51,7 @@ impl SavedEdgeSections {
             pattern: self.pattern,
             border: self.border,
             shadow: self.shadow,
+            debug: false,
         }
     }
 }
