@@ -1286,6 +1286,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 // Per-layer effect radius for tile culling.
 fn layer_effect_radius(layer: SdfLayer) -> f32 {
+    if (layer.flags & LAYER_FLAG_DISTANCE_FIELD) != 0u {
+        return 1e10;
+    }
     var r = abs(layer.expand) + layer.blur + layer.outline_thickness;
     if (layer.flags & LAYER_FLAG_HAS_PATTERN) != 0u {
         r += layer.thickness * 0.5;
