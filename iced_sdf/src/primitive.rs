@@ -98,6 +98,18 @@ impl SdfPrimitive {
     pub fn debug_tiles(self, enabled: bool) -> Self { self.debug_flags(if enabled { 1 } else { 0 }) }
     pub fn shape_count(&self) -> usize { self.shapes.len() }
     pub fn is_empty(&self) -> bool { self.shapes.is_empty() }
+
+    /// Whether any shape or layer in this primitive has active animations.
+    ///
+    /// Checks both layer-level animations (flow speed) and node-level
+    /// animations (dash/arrow pattern speed). Useful for widgets to decide
+    /// whether to request continuous redraws.
+    pub fn has_animations(&self) -> bool {
+        self.shapes.iter().any(|entry| {
+            entry.layers.iter().any(|l| l.is_animated())
+                || entry.shape.node().has_animation()
+        })
+    }
 }
 
 impl Default for SdfPrimitive {
@@ -415,5 +427,35 @@ mod tests {
         assert_eq!(b1, g0);
         assert_eq!(b0 + g0, b1);
         assert_eq!(total, g0 + g1);
+    }
+
+    #[test]
+    fn test_has_animations_empty() {
+        assert!(!SdfPrimitive::new().has_animations());
+    }
+
+    #[test]
+    fn test_has_animations_static() {
+        let mut p = SdfPrimitive::new();
+        let shape = Sdf::circle([0.0, 0.0], 10.0);
+        p.push(&shape, &[Layer::solid(iced::Color::WHITE)], [0.0, 0.0, 100.0, 100.0]);
+        assert!(!p.has_animations());
+    }
+
+    #[test]
+    fn test_has_animations_flow_layer() {
+        let mut p = SdfPrimitive::new();
+        let shape = Sdf::circle([0.0, 0.0], 10.0);
+        let layer = Layer::stroke(iced::Color::WHITE, crate::Pattern::solid(2.0).flow(50.0));
+        p.push(&shape, &[layer], [0.0, 0.0, 100.0, 100.0]);
+        assert!(p.has_animations());
+    }
+
+    #[test]
+    fn test_has_animations_animated_shape() {
+        let mut p = SdfPrimitive::new();
+        let shape = Sdf::circle([0.0, 0.0], 10.0).dash(5.0, 3.0, 1.0, 0.0, 20.0);
+        p.push(&shape, &[Layer::solid(iced::Color::WHITE)], [0.0, 0.0, 100.0, 100.0]);
+        assert!(p.has_animations());
     }
 }

@@ -191,6 +191,13 @@ impl Layer {
         }
     }
 
+    /// Whether this layer has active time-dependent animations.
+    ///
+    /// Returns `true` if the layer's pattern has a non-zero flow speed.
+    pub fn is_animated(&self) -> bool {
+        self.pattern.as_ref().is_some_and(|p| p.flow_speed != 0.0)
+    }
+
     /// Whether this layer fills the shape interior (no pattern = solid fill).
     ///
     /// Fill layers render everywhere inside the shape boundary (dist <= 0),
@@ -363,5 +370,28 @@ mod tests {
         assert_eq!(gpu.flags & FLAG_GRADIENT, FLAG_GRADIENT);
         assert_eq!(gpu.flags & FLAG_GRADIENT_U, FLAG_GRADIENT_U);
         assert_eq!(gpu.gradient_angle, 0.5);
+    }
+
+    #[test]
+    fn test_is_animated_static() {
+        assert!(!Layer::solid(Color::WHITE).is_animated());
+        assert!(!Layer::stroke(Color::WHITE, Pattern::solid(2.0)).is_animated());
+        assert!(!Layer::stroke(Color::WHITE, Pattern::dashed(2.0, 10.0, 5.0)).is_animated());
+        assert!(!Layer::distance_field(Color::WHITE, Color::BLACK).is_animated());
+    }
+
+    #[test]
+    fn test_is_animated_with_flow() {
+        let layer = Layer::stroke(Color::WHITE, Pattern::solid(2.0).flow(50.0));
+        assert!(layer.is_animated());
+
+        let layer = Layer::stroke(Color::WHITE, Pattern::dashed(2.0, 10.0, 5.0).flow(100.0));
+        assert!(layer.is_animated());
+    }
+
+    #[test]
+    fn test_is_animated_zero_flow() {
+        let layer = Layer::stroke(Color::WHITE, Pattern::solid(2.0).flow(0.0));
+        assert!(!layer.is_animated());
     }
 }

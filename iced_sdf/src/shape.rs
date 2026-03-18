@@ -136,6 +136,27 @@ pub enum SdfNode {
     Onion { node: Box<SdfNode>, thickness: f32 },
 }
 
+impl SdfNode {
+    /// Whether this node tree contains time-dependent animations.
+    ///
+    /// Returns `true` if any `Dash` or `Arrow` node has a non-zero speed.
+    pub fn has_animation(&self) -> bool {
+        match self {
+            SdfNode::Dash { speed, node, .. } | SdfNode::Arrow { speed, node, .. } => {
+                *speed != 0.0 || node.has_animation()
+            }
+            SdfNode::Union(a, b)
+            | SdfNode::Subtract(a, b)
+            | SdfNode::Intersect(a, b) => a.has_animation() || b.has_animation(),
+            SdfNode::SmoothUnion { a, b, .. } | SdfNode::SmoothSubtract { a, b, .. } => {
+                a.has_animation() || b.has_animation()
+            }
+            SdfNode::Round { node, .. } | SdfNode::Onion { node, .. } => node.has_animation(),
+            _ => false,
+        }
+    }
+}
+
 /// Builder for SDF shapes with method chaining.
 ///
 /// Each shape method below includes a live GPU-rendered preview powered by the
@@ -1209,5 +1230,50 @@ mod tests {
             SdfNode::Round { .. } => {}
             _ => panic!("Expected Round"),
         }
+    }
+
+    #[test]
+    fn test_has_animation_static_nodes() {
+        assert!(!Sdf::circle([0.0, 0.0], 10.0).node().has_animation());
+        assert!(!Sdf::rect([0.0, 0.0], [10.0, 10.0]).node().has_animation());
+
+        // Union of static shapes
+        let shape = Sdf::circle([0.0, 0.0], 10.0) | Sdf::rect([0.0, 0.0], [10.0, 10.0]);
+        assert!(!shape.node().has_animation());
+
+        // Modifiers on static shapes
+        assert!(!Sdf::circle([0.0, 0.0], 10.0).round(2.0).node().has_animation());
+        assert!(!Sdf::circle([0.0, 0.0], 10.0).onion(1.0).node().has_animation());
+    }
+
+    #[test]
+    fn test_has_animation_dash_with_speed() {
+        let shape = Sdf::circle([0.0, 0.0], 50.0).dash(10.0, 5.0, 2.0, 0.0, 30.0);
+        assert!(shape.node().has_animation());
+    }
+
+    #[test]
+    fn test_has_animation_dash_zero_speed() {
+        let shape = Sdf::circle([0.0, 0.0], 50.0).dash(10.0, 5.0, 2.0, 0.0, 0.0);
+        assert!(!shape.node().has_animation());
+    }
+
+    #[test]
+    fn test_has_animation_arrow_with_speed() {
+        let shape = Sdf::circle([0.0, 0.0], 50.0).arrow(10.0, 5.0, 2.0, 0.5, 20.0);
+        assert!(shape.node().has_animation());
+    }
+
+    #[test]
+    fn test_has_animation_nested() {
+        // Animated shape inside a union
+        let animated = Sdf::circle([0.0, 0.0], 50.0).dash(10.0, 5.0, 2.0, 0.0, 30.0);
+        let static_shape = Sdf::rect([0.0, 0.0], [10.0, 10.0]);
+        let combined = animated | static_shape;
+        assert!(combined.node().has_animation());
+
+        // Animated shape inside round modifier
+        let shape = Sdf::circle([0.0, 0.0], 50.0).dash(10.0, 5.0, 2.0, 0.0, 30.0).round(2.0);
+        assert!(shape.node().has_animation());
     }
 }

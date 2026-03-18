@@ -761,6 +761,9 @@ where
             batch
         };
 
+        // Detect SDF animations (e.g. edge flow_speed) for on-demand redraw.
+        state.sdf_animated.set(edge_batch.has_animations());
+
         renderer.with_layer(layout.bounds(), |renderer| {
             // Batched static edges (single draw call)
             if !edge_batch.is_empty() {
@@ -1321,6 +1324,14 @@ where
             state.time += capped_delta;
         }
         state.last_update = Some(now);
+
+        // Drive continuous redraws when SDF animations are active.
+        // The flag is set during draw() by checking SdfPrimitive::has_animations().
+        if let Event::Window(iced::window::Event::RedrawRequested(_)) = event
+            && state.sdf_animated.get()
+        {
+            shell.request_redraw();
+        }
 
         // Track keyboard modifiers for Shift/Ctrl selection
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {

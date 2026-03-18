@@ -10,6 +10,7 @@
 use super::camera::Camera2D;
 use super::euclid::WorldPoint;
 use iced::keyboard;
+use std::cell::Cell;
 use std::collections::HashSet;
 use web_time::Instant;
 
@@ -47,6 +48,9 @@ pub(super) struct NodeGraphState {
     /// Tracks if the initial camera has been applied from the widget config.
     /// Once true, camera is controlled by user interaction only.
     pub(super) camera_initialized: bool,
+    /// Set during draw() when any SDF primitive has active animations.
+    /// Read during update() to drive continuous redraws via shell.request_redraw().
+    pub(super) sdf_animated: Cell<bool>,
 }
 
 impl Default for NodeGraphState {
@@ -61,6 +65,7 @@ impl Default for NodeGraphState {
             left_mouse_down: false,
             valid_drop_targets: HashSet::new(),
             camera_initialized: false,
+            sdf_animated: Cell::new(false),
         }
     }
 }

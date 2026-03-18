@@ -871,6 +871,14 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         let screenshot_sub = Subscription::none();
 
+        if self.embed {
+            // Embed mode: SdfCanvas widget drives redraws via shell.request_redraw()
+            // when SDF animations are active. No continuous frame subscription needed.
+            return Subscription::batch([screenshot_sub]);
+        }
+
+        // Full gallery: window::frames() for application-level animation
+        // (time-varying shapes via build closures).
         Subscription::batch([
             window::frames().map(|_| Message::Tick),
             screenshot_sub,

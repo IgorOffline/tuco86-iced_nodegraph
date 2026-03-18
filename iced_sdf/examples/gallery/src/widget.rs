@@ -1,5 +1,7 @@
 //! Custom widget that renders an SDF shape using iced_sdf.
 
+use std::cell::Cell;
+
 use iced::widget::container;
 use iced::{Color, Element, Fill, Length, Rectangle, Size, Theme};
 use iced_sdf::{Layer, SdfPrimitive};
@@ -40,6 +42,7 @@ pub fn sdf_canvas<'a>(
         layer_groups: groups,
         time,
         extent: entry.extent,
+        is_animated: Cell::new(false),
     };
 
     container(canvas)
@@ -57,6 +60,8 @@ struct SdfCanvas {
     layer_groups: Vec<(Vec<Layer>, bool)>,
     time: f32,
     extent: f32,
+    /// Set during draw(), read during update() to drive animation redraws.
+    is_animated: Cell<bool>,
 }
 
 impl<Message, Renderer> iced::advanced::Widget<Message, Theme, Renderer> for SdfCanvas
@@ -78,6 +83,24 @@ where
             .height(Length::Fill)
             .resolve(Length::Fill, Length::Fill, Size::ZERO);
         iced::advanced::layout::Node::new(size)
+    }
+
+    fn update(
+        &mut self,
+        _tree: &mut iced::advanced::widget::Tree,
+        event: &iced::Event,
+        _layout: iced::advanced::Layout<'_>,
+        _cursor: iced::advanced::mouse::Cursor,
+        _renderer: &Renderer,
+        _clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        _viewport: &Rectangle,
+    ) {
+        if let iced::Event::Window(iced::window::Event::RedrawRequested(_)) = event {
+            if self.is_animated.get() {
+                shell.request_redraw();
+            }
+        }
     }
 
     fn draw(
@@ -102,6 +125,9 @@ where
         let cam_x = center_x / zoom;
         let cam_y = center_y / zoom;
 
+        // Detect if any primitive has active animations
+        let mut animated = false;
+
         // Render each layer group as a separate SdfPrimitive (for per-layer debug)
         let sb = [bounds.x, bounds.y, bounds.width, bounds.height];
         for (layers, debug) in &self.layer_groups {
@@ -115,8 +141,15 @@ where
             let prim = prim.camera(cam_x, cam_y, zoom)
                 .time(self.time)
                 .debug_tiles(*debug);
+
+            if prim.has_animations() {
+                animated = true;
+            }
+
             renderer.draw_primitive(bounds, prim);
         }
+
+        self.is_animated.set(animated);
 
         // Cursor distance overlay
         if let Some(pos) = cursor.position_over(bounds) {
