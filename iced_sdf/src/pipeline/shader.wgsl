@@ -330,45 +330,51 @@ fn eval_segment(p: vec2<f32>, seg: GpuSegment) -> SdfResult {
 fn eval_single_segment(p: vec2<f32>, seg_idx: u32, style: GpuStyle) -> SdfResult {
     let seg = segments[seg_idx];
     var r = eval_segment(p, seg);
-    // Map parametric u (0..1) to normalized arc-length (0..1 over total contour)
+    // Map parametric u (0..1) to world-space arc-length
+    // Patterns need world units; render_style normalizes for gradients
     let arc_start = seg.arc_range.x;
     let arc_end = seg.arc_range.y;
-    let total = seg.arc_range.z;
-    let world_u = arc_start + r.u * (arc_end - arc_start);
-    if total > 0.0 { r.u = world_u / total; } else { r.u = 0.0; }
-    // Sign from perpendicular: v > 0 = right side in screen Y-down = negative
+    r.u = arc_start + r.u * (arc_end - arc_start);
+    // Store total arc length in v_unused... no, we need v for sign.
+    // Instead, store total in arc_range.z and pass through via a trick:
+    // We'll normalize in render_style using dist_from/dist_to context.
+    // For now: u = world-space arc-length, v = perpendicular
     r.dist = r.dist * select(1.0, -1.0, r.v > 0.0);
     return r;
+}
+
+// Total arc length for a segment (for normalizing u to 0..1 in render_style)
+fn segment_total_arc(seg_idx: u32) -> f32 {
+    return segments[seg_idx].arc_range.z;
 }
 
 // ============================================================================
 // Style Rendering
 // ============================================================================
 
-fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData) -> vec4<f32> {
-    // Distance field visualization (special mode)
+// total_arc: total arc-length of the contour (for normalizing u to 0..1)
+fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32) -> vec4<f32> {
     if (style.flags & STYLE_FLAG_DISTANCE_FIELD) != 0u {
         return render_distance_field(sdf.dist, style, draw);
     }
 
+    // Normalize u from world-space to 0..1 for color gradient
+    var arc_t = 0.0;
+    if total_arc > 0.0 { arc_t = clamp(sdf.u / total_arc, 0.0, 1.0); }
+
     var dist = sdf.dist;
-    let arc_t = clamp(sdf.u, 0.0, 1.0);
 
     if (style.flags & STYLE_FLAG_HAS_PATTERN) != 0u {
-        // Pattern: transforms distance to stroke-edge space (negative=inside, 0=edge)
+        // Pattern uses world-space u (sdf.u) for dash layout
         dist = apply_pattern(dist, sdf, style, draw.time);
 
-        // Color from arc-length gradient (near only, patterns don't use dist interpolation)
         let color = mix(style.near_start, style.near_end, arc_t);
-
-        // AA at pattern boundary (dist=0)
         let aa = fwidth(dist) * 0.75;
         let alpha = color.a * (1.0 - smoothstep(-aa, aa, dist));
         if alpha < 0.001 { return vec4(0.0); }
         return vec4(color.rgb * alpha, alpha);
     }
 
-    // No pattern: 4-color bilinear interpolation over arc-length x distance range
     let near = mix(style.near_start, style.near_end, arc_t);
     let far = mix(style.far_start, style.far_end, arc_t);
 
@@ -536,7 +542,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let entry_idx = raw_seg & ~TILING_BIT;
                 let entry = draw_entries[entry_idx];
                 let sdf = sd_tiling(world_p, entry.tiling_type, entry.tiling_params);
-                let frag = render_style(sdf, style, draw);
+                let frag = render_style(sdf, style, draw, 0.0);
                 acc = acc + frag * (1.0 - acc.a);
                 i++;
                 continue;
@@ -545,21 +551,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             // Regular segments: find nearest among consecutive same-style slots
             var best_sdf = eval_single_segment(world_p, raw_seg, style);
             var best_abs = abs(best_sdf.dist);
+            var best_seg = raw_seg;
             i++;
 
             while i < count && tile_slots[slot_base + i * 2u + 1u] == first_sty {
                 let next_seg = tile_slots[slot_base + i * 2u];
-                if (next_seg & TILING_BIT) != 0u { break; } // don't group tilings
+                if (next_seg & TILING_BIT) != 0u { break; }
                 let sdf = eval_single_segment(world_p, next_seg, style);
                 let ad = abs(sdf.dist);
                 if ad < best_abs {
                     best_abs = ad;
                     best_sdf = sdf;
+                    best_seg = next_seg;
                 }
                 i++;
             }
 
-            let frag = render_style(best_sdf, style, draw);
+            let frag = render_style(best_sdf, style, draw, segment_total_arc(best_seg));
             acc = acc + frag * (1.0 - acc.a);
         }
     } else {
@@ -572,12 +580,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let style = styles[entry.style_idx];
             if entry.entry_type == ENTRY_TILING {
                 let sdf = sd_tiling(world_p, entry.tiling_type, entry.tiling_params);
-                let frag = render_style(sdf, style, draw);
+                let frag = render_style(sdf, style, draw, 0.0);
                 acc = acc + frag * (1.0 - acc.a);
             } else {
                 for (var s = 0u; s < entry.segment_count; s++) {
-                    let sdf = eval_single_segment(world_p, entry.segment_start + s, style);
-                    let frag = render_style(sdf, style, draw);
+                    let seg_idx = entry.segment_start + s;
+                    let sdf = eval_single_segment(world_p, seg_idx, style);
+                    let frag = render_style(sdf, style, draw, segment_total_arc(seg_idx));
                     acc = acc + frag * (1.0 - acc.a);
                 }
             }
@@ -615,11 +624,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 fn cs_eval_segment(p: vec2<f32>, seg_idx: u32) -> SdfResult {
     let seg = cs_segments[seg_idx];
     var r = eval_segment(p, seg);
+    // World-space arc-length (patterns need world units)
     let arc_start = seg.arc_range.x;
     let arc_end = seg.arc_range.y;
-    let total = seg.arc_range.z;
-    let world_u = arc_start + r.u * (arc_end - arc_start);
-    if total > 0.0 { r.u = world_u / total; } else { r.u = 0.0; }
+    r.u = arc_start + r.u * (arc_end - arc_start);
     r.dist = r.dist * select(1.0, -1.0, r.v > 0.0);
     return r;
 }
