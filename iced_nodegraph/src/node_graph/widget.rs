@@ -26,7 +26,7 @@ use web_time::Instant;
 use super::{
     DragInfo, NodeGraph, NodeGraphMessage, RenderContext,
     euclid::{IntoIced, WorldVector},
-    state::{Dragging, NodeGraphState},
+    state::{Dragging, NodeGraphState, z_render_indices},
 };
 use crate::{
     PinDirection, PinRef, PinSide,
@@ -530,6 +530,7 @@ where
     ) {
         let state = tree.state.downcast_ref::<NodeGraphState>();
         let mut camera = state.camera;
+        let z_indices = z_render_indices(state, self.nodes.len());
 
         // Update time for animations
         let time = {
@@ -833,12 +834,11 @@ where
             let cam_y = render_context.camera_position.y;
             let cam_zoom = render_context.camera_zoom;
 
-            for (node_index, ((_position, _element, node_style), node_layout)) in self
-                .nodes
-                .iter()
-                .zip(layout.children())
-                .enumerate()
-            {
+            for &node_index in &z_indices {
+                let (_position, _element, node_style) = &self.nodes[node_index];
+                let Some(node_layout) = layout.children().nth(node_index) else {
+                    continue;
+                };
                 let is_selected = state.selected_nodes.contains(&node_index);
                 let node_status = if is_selected { NodeStatus::Selected } else { NodeStatus::Idle };
                 let base_style = resolve_node_style(node_style, theme);
@@ -896,13 +896,14 @@ where
         // Layers 4..N: Nodes (each node gets 3 sub-layers)
         // For each node: Fill → Widgets → Foreground (border + pins batched)
         // ========================================
-        for (node_index, (((_position, element, node_style), node_tree), node_layout)) in self
-            .nodes
-            .iter()
-            .zip(&tree.children)
-            .zip(layout.children())
-            .enumerate()
-        {
+        for &node_index in &z_indices {
+            let (_position, element, node_style) = &self.nodes[node_index];
+            let Some(node_tree) = tree.children.get(node_index) else {
+                continue;
+            };
+            let Some(node_layout) = layout.children().nth(node_index) else {
+                continue;
+            };
             let is_selected = state.selected_nodes.contains(&node_index);
             let offset = compute_node_offset(node_index);
 
@@ -1363,6 +1364,11 @@ where
             state.camera_initialized = true;
         }
 
+        // Assign z-order entries to any newly-seen node indices so freshly
+        // pushed nodes spawn on top of older ones.
+        state.ensure_z_entries(self.nodes.len());
+        let z_indices = z_render_indices(state, self.nodes.len());
+
         // Sync the externally-provided selection (`.selection()`) into state
         // only when the host changed it since we last looked. Comparing
         // against `state.selected_nodes` directly would also fire when the
@@ -1698,6 +1704,8 @@ where
                                 }
                             }
                         }
+                        // Promote this node to the top of the z-order on drop.
+                        state.promote_z(node_index);
                         state.dragging = Dragging::None;
                         // Emit drag end event
                         if let Some(handler) = self.on_drag_end_handler() {
@@ -1959,13 +1967,13 @@ where
                         }
                         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                             // Complete group move - notify all selected nodes moved
+                            let indices: Vec<usize> =
+                                state.selected_nodes.iter().copied().collect();
                             if let Some(cursor_position) = world_cursor.position() {
                                 let cursor_position: WorldPoint = cursor_position.into_euclid();
                                 let offset = cursor_position - origin;
 
                                 // Translate internal indices to user IDs
-                                let indices: Vec<usize> =
-                                    state.selected_nodes.iter().copied().collect();
                                 let node_ids = self.translate_node_ids(&indices);
                                 let delta = offset.into_iced();
                                 if let Some(handler) = self.on_group_move_handler() {
@@ -1978,6 +1986,8 @@ where
                                     }));
                                 }
                             }
+                            // Promote moved nodes to the top of the z-order.
+                            state.promote_z_many(&indices);
                             state.dragging = Dragging::None;
                             // Emit drag end event
                             if let Some(handler) = self.on_drag_end_handler() {
@@ -1991,21 +2001,41 @@ where
                     },
                 }
 
-                for (((_, element, _style), tree), layout) in self
-                    .elements_iter_mut()
-                    .zip(&mut tree.children)
-                    .zip(layout.children())
-                {
+                // Iterate top-first so the topmost node's child widgets get a
+                // chance to capture the event before nodes below them. Without
+                // this, sliders / inputs underneath a higher-z node would
+                // consume clicks meant for the visible node on top.
+                //
+                // If the event was already captured BEFORE this loop (e.g. the
+                // parent captured CursorMoved at the top of update() during a
+                // drag), still propagate to all children — that captured-but-
+                // shared mode is how snap targets receive cursor updates while
+                // an edge is being dragged. Only short-circuit when one of the
+                // children itself takes the event.
+                let pre_captured = shell.is_event_captured();
+                for &node_index in z_indices.iter().rev() {
+                    let Some((_pos, element, _style)) = self.nodes.get_mut(node_index) else {
+                        continue;
+                    };
+                    let Some(child_tree) = tree.children.get_mut(node_index) else {
+                        continue;
+                    };
+                    let Some(child_layout) = layout.children().nth(node_index) else {
+                        continue;
+                    };
                     element.as_widget_mut().update(
-                        tree,
+                        child_tree,
                         event,
-                        layout,
+                        child_layout,
                         world_cursor,
                         renderer,
                         clipboard,
                         shell,
                         viewport,
                     );
+                    if !pre_captured && shell.is_event_captured() {
+                        break;
+                    }
                 }
 
                 if shell.is_event_captured() {
@@ -2146,10 +2176,20 @@ where
                             }
 
                         if let Some(cursor_position) = world_cursor.position() {
-                            // check bounds for pins
-                            for (node_index, (node_layout, node_tree)) in
-                                layout.children().zip(&tree.children).enumerate()
-                            {
+                            // Per-node hit-test, top-first by z-order: check this
+                            // node's pins first, then its body. The first node to
+                            // own the cursor — pin OR body — wins. This way a body
+                            // on top blocks click-through to a pin hidden beneath
+                            // (no accidental edge-drag from a covered pin), while
+                            // the snap logic during an active edge drag still sees
+                            // all pins regardless of cover.
+                            for &node_index in z_indices.iter().rev() {
+                                let Some(node_layout) = layout.children().nth(node_index) else {
+                                    continue;
+                                };
+                                let Some(node_tree) = tree.children.get(node_index) else {
+                                    continue;
+                                };
                                 let pins = find_pins(node_tree, node_layout);
                                 // Get node_id for this node_index
                                 let current_node_id =
@@ -2329,10 +2369,8 @@ where
                                         return;
                                     }
                                 }
-                            }
 
-                            // check bounds for nodes
-                            for (node_index, node_layout) in layout.children().enumerate() {
+                                // Body check for this same node (still top-first).
                                 if world_cursor.is_over(node_layout.bounds()) {
                                     let state = tree.state.downcast_mut::<NodeGraphState>();
                                     let already_selected =

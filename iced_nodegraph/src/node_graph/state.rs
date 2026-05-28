@@ -11,7 +11,7 @@ use super::camera::Camera2D;
 use super::euclid::WorldPoint;
 use iced::keyboard;
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use web_time::Instant;
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -57,6 +57,13 @@ pub(super) struct NodeGraphState {
     /// Set during draw() when any SDF primitive has active animations.
     /// Read during update() to drive continuous redraws via shell.request_redraw().
     pub(super) sdf_animated: Cell<bool>,
+    /// Per-node z-order timestamp. Higher = more recently moved (or newly added).
+    /// Indexed by internal node index. Newly seen indices are auto-assigned the
+    /// next counter value so freshly pushed nodes spawn on top of older ones.
+    pub(super) node_z: HashMap<usize, u64>,
+    /// Monotonic counter that feeds into `node_z`. Bumped on move release and
+    /// on first sight of a new node index.
+    pub(super) z_counter: u64,
 }
 
 impl Default for NodeGraphState {
@@ -73,8 +80,51 @@ impl Default for NodeGraphState {
             valid_drop_targets: HashSet::new(),
             camera_initialized: false,
             sdf_animated: Cell::new(false),
+            node_z: HashMap::new(),
+            z_counter: 0,
         }
     }
+}
+
+impl NodeGraphState {
+    /// Ensure every index in `0..node_count` has a z entry. Newly seen indices
+    /// receive the next counter value, so freshly pushed nodes render on top.
+    pub(super) fn ensure_z_entries(&mut self, node_count: usize) {
+        for idx in 0..node_count {
+            if let std::collections::hash_map::Entry::Vacant(e) = self.node_z.entry(idx) {
+                e.insert(self.z_counter);
+                self.z_counter = self.z_counter.wrapping_add(1);
+            }
+        }
+    }
+
+    /// Promote a single node to the top of the z-order.
+    pub(super) fn promote_z(&mut self, idx: usize) {
+        self.node_z.insert(idx, self.z_counter);
+        self.z_counter = self.z_counter.wrapping_add(1);
+    }
+
+    /// Promote a group of nodes to the top, preserving their relative order.
+    pub(super) fn promote_z_many(&mut self, indices: &[usize]) {
+        let mut sorted: Vec<usize> = indices.to_vec();
+        sorted.sort_by_key(|i| self.node_z.get(i).copied().unwrap_or(0));
+        for idx in sorted {
+            self.promote_z(idx);
+        }
+    }
+}
+
+/// Returns node indices in render order (back to front).
+/// Unselected nodes by z ascending, then selected nodes by z ascending.
+/// Reverse this iterator for top-first hit-test / event propagation.
+pub(super) fn z_render_indices(state: &NodeGraphState, node_count: usize) -> Vec<usize> {
+    let mut indices: Vec<usize> = (0..node_count).collect();
+    indices.sort_by_key(|&i| {
+        let selected = state.selected_nodes.contains(&i);
+        let z = state.node_z.get(&i).copied().unwrap_or(0);
+        (selected, z)
+    });
+    indices
 }
 
 #[cfg(test)]
@@ -237,5 +287,88 @@ mod tests {
         assert!(state.selected_nodes.is_empty());
         assert!(!state.left_mouse_down);
         assert!(state.valid_drop_targets.is_empty());
+        assert!(state.node_z.is_empty());
+        assert_eq!(state.z_counter, 0);
+    }
+
+    #[test]
+    fn test_ensure_z_entries_assigns_new_indices() {
+        let mut state = NodeGraphState::default();
+        state.ensure_z_entries(3);
+
+        assert_eq!(state.node_z.get(&0), Some(&0));
+        assert_eq!(state.node_z.get(&1), Some(&1));
+        assert_eq!(state.node_z.get(&2), Some(&2));
+        assert_eq!(state.z_counter, 3);
+
+        // Re-running with same count does not bump existing entries.
+        state.ensure_z_entries(3);
+        assert_eq!(state.z_counter, 3);
+
+        // Growing assigns higher z to new indices (so freshly pushed nodes go on top).
+        state.ensure_z_entries(5);
+        assert_eq!(state.node_z.get(&3), Some(&3));
+        assert_eq!(state.node_z.get(&4), Some(&4));
+    }
+
+    #[test]
+    fn test_promote_z_puts_node_on_top() {
+        let mut state = NodeGraphState::default();
+        state.ensure_z_entries(3);
+
+        state.promote_z(0);
+        // 0 should now have the highest z.
+        let z0 = state.node_z[&0];
+        let z1 = state.node_z[&1];
+        let z2 = state.node_z[&2];
+        assert!(z0 > z1);
+        assert!(z0 > z2);
+    }
+
+    #[test]
+    fn test_promote_z_many_preserves_relative_order() {
+        let mut state = NodeGraphState::default();
+        state.ensure_z_entries(4);
+        // Initial z: 0=0, 1=1, 2=2, 3=3
+
+        // Promote {0, 2}: 2 was higher than 0 before, so after promotion 2 must still be higher.
+        state.promote_z_many(&[0, 2]);
+        assert!(state.node_z[&0] > state.node_z[&1]);
+        assert!(state.node_z[&0] > state.node_z[&3]);
+        assert!(state.node_z[&2] > state.node_z[&0]);
+    }
+
+    #[test]
+    fn test_z_render_indices_unselected_then_selected() {
+        let mut state = NodeGraphState::default();
+        state.ensure_z_entries(4);
+
+        // Make 1 most recently moved among unselected.
+        state.promote_z(1);
+        // Select 3.
+        state.selected_nodes.insert(3);
+
+        let order = z_render_indices(&state, 4);
+
+        // Selected goes last (on top). 3 must be at the end.
+        assert_eq!(order.last(), Some(&3));
+        // Among unselected (0, 2, 1), 1 has highest z, so it must come just
+        // before the selected block.
+        let one_pos = order.iter().position(|&i| i == 1).unwrap();
+        assert_eq!(one_pos, 2);
+    }
+
+    #[test]
+    fn test_z_render_indices_selected_sorted_by_z() {
+        let mut state = NodeGraphState::default();
+        state.ensure_z_entries(3);
+        state.selected_nodes.insert(0);
+        state.selected_nodes.insert(2);
+        // 2 is more recently assigned z, so it should render on top of 0.
+
+        let order = z_render_indices(&state, 3);
+
+        // 1 (unselected) first, then 0 and 2 (selected, with 2 on top).
+        assert_eq!(order, vec![1, 0, 2]);
     }
 }
