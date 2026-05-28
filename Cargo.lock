@@ -1546,6 +1546,7 @@ dependencies = [
  "glam 0.30.10",
  "iced",
  "iced_wgpu",
+ "png",
  "pollster",
  "web-time",
  "wgpu",

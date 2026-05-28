@@ -449,6 +449,16 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32)
         return render_distance_field(sdf.dist, style, draw);
     }
 
+    // Antialiasing half-width, in world units. The contour SDF has |grad|=1 in
+    // world space, so one screen pixel spans `1/(zoom*scale)` world units. We
+    // derive the AA band analytically instead of with `fwidth(dist)`: the tile
+    // loop above is data-dependent (different tiles per pixel), so a derivative
+    // quad straddling a tile boundary runs in non-uniform control flow, where
+    // screen-space derivatives are undefined per the WGSL spec. On some GPUs
+    // that produced a 1px seam at every tile boundary; the analytic form is
+    // deterministic everywhere.
+    let aa = 1.1 / max(draw.camera_zoom * draw.scale_factor, 1e-6);
+
     // Normalize u from world-space to 0..1 for color gradient
     var arc_t = 0.0;
     if total_arc > 0.0 { arc_t = clamp(sdf.u / total_arc, 0.0, 1.0); }
@@ -460,7 +470,6 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32)
         dist = apply_pattern(dist, sdf, style, draw.time);
 
         let color = mix(style.near_start, style.near_end, arc_t);
-        let aa = fwidth(dist) * 0.75;
         let alpha = color.a * (1.0 - smoothstep(-aa, aa, dist));
         if alpha < 0.001 { return vec4(0.0); }
         return vec4(color.rgb * alpha, alpha);
@@ -478,8 +487,7 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32)
         color = near;
     }
 
-    // fwidth-based AA at distance boundaries
-    let aa = fwidth(dist) * 0.75;
+    // Analytic AA at distance boundaries (see `aa` derivation above).
     let alpha_from = smoothstep(style.dist_from - aa, style.dist_from + aa, dist);
     let alpha_to = 1.0 - smoothstep(style.dist_to - aa, style.dist_to + aa, dist);
     let alpha = color.a * alpha_from * alpha_to;

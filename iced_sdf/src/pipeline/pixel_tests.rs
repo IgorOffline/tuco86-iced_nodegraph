@@ -571,6 +571,58 @@ impl TestRenderer {
         pixels[(y * width + x) as usize]
     }
 
+    /// Render with fully explicit tile-grid placement: `bounds_origin` and
+    /// `grid` are in physical pixels, `camera` in world units. Lets a test move
+    /// the tile grid independently of the rendered content.
+    #[allow(clippy::too_many_arguments)]
+    fn render_scene_phys(
+        &self,
+        drawables: &[(&crate::drawable::Drawable, &Style)],
+        width: u32,
+        height: u32,
+        zoom: f32,
+        scale: f32,
+        bounds_origin_phys: [f32; 2],
+        grid_phys: [u32; 2],
+        camera: [f32; 2],
+    ) -> Vec<[u8; 4]> {
+        let mut gpu_segments = Vec::new();
+        let mut gpu_entries = Vec::new();
+        let mut gpu_styles = Vec::new();
+        for (i, (drawable, style)) in drawables.iter().enumerate() {
+            let seg_offset = gpu_segments.len() as u32;
+            let (mut entry, gpu_style) =
+                compile_drawable(drawable, style, i as u32, 0, &mut gpu_segments);
+            entry.style_idx = gpu_styles.len() as u32;
+            entry.segment_start = seg_offset;
+            gpu_entries.push(entry);
+            gpu_styles.push(gpu_style);
+        }
+        let grid_cols = (grid_phys[0] as f32 / TILE_SIZE).ceil() as u32;
+        let grid_rows = (grid_phys[1] as f32 / TILE_SIZE).ceil() as u32;
+        let total_tiles = grid_cols * grid_rows;
+        let draw_data = DrawData {
+            bounds_origin: GpuVec2::new(bounds_origin_phys[0], bounds_origin_phys[1]),
+            camera_position: GpuVec2::new(camera[0], camera[1]),
+            camera_zoom: zoom,
+            scale_factor: scale,
+            time: 0.0,
+            debug_flags: 0,
+            entry_count: gpu_entries.len() as u32,
+            entry_start: 0,
+            grid_cols,
+            grid_rows,
+            tile_base: 0,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
+        };
+        self.execute_render(
+            &gpu_entries, &gpu_segments, &gpu_styles,
+            draw_data, total_tiles, width, height, grid_cols, grid_rows,
+        )
+    }
+
     fn create_storage<T: ShaderType + ShaderSize + WriteInto>(&self, items: &[T]) -> Buffer {
         let mut scratch = Vec::new();
         let mut writer = StorageBuffer::new(&mut scratch);
@@ -1598,5 +1650,239 @@ fn closed_solid_fill_no_interior_holes() {
     assert!(
         holes.is_empty(),
         "Interior tiles of solid-filled rounded_rect were culled (showing as holes): {holes:?}",
+    );
+}
+
+/// Composite premultiplied-alpha RGBA pixels over a dark background and save a
+/// PNG (for visual inspection of the edge-editor render).
+fn save_rgba_png(path: &str, width: u32, height: u32, pixels: &[[u8; 4]], bg: [u8; 3]) {
+    let mut bytes = Vec::with_capacity((width * height * 4) as usize);
+    for p in pixels {
+        let a = p[3] as f32 / 255.0;
+        // Pixels are premultiplied; composite over bg.
+        for c in 0..3 {
+            let v = p[c] as f32 + bg[c] as f32 * (1.0 - a);
+            bytes.push(v.round().clamp(0.0, 255.0) as u8);
+        }
+        bytes.push(255);
+    }
+    let file = std::fs::File::create(path).unwrap();
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header().unwrap().write_image_data(&bytes).unwrap();
+}
+
+/// Renders the edge editor's exact default layer stack (stroke + outline +
+/// border + shadow) on the two crossing S-curves, but with each layer a single
+/// distinguishable flat color, and dumps a 160x80 PNG centered on the crossing.
+/// Not an assertion - a visual probe for the reported tile-boundary artifact.
+/// Run on demand: `cargo test -p iced_sdf dump_edge_editor_center -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn dump_edge_editor_center() {
+    let renderer = TestRenderer::new();
+    let width = 160u32;
+    let height = 80u32;
+    let scale = 2.0_f32;
+    // Match the real canvas: zoom ~1.85 logical * scale 2.0 => cs ~3.7 px/world.
+    let zoom = 1.85_f32;
+
+    let fwd = Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0]);
+    let mir = Curve::bezier([120.0, -40.0], [40.0, -40.0], [-40.0, 40.0], [-120.0, 40.0]);
+
+    // Edge editor defaults: thickness 6, outline 1.2, border gap 2 + thick 3,
+    // shadow expand 10. Gradients replaced by flat, distinguishable colors.
+    let c = |r, g, b, a| iced::Color::from_rgba(r, g, b, a);
+    let stroke = Style::arc_gradient_stroke(c(0.0, 0.9, 1.0, 1.0), c(0.0, 0.9, 1.0, 1.0), Pattern::solid(6.0));
+    let outline = Style::stroke(c(1.0, 0.1, 0.1, 1.0), Pattern::solid(6.0 + 1.2 * 2.0));
+    let border = Style::arc_gradient_stroke(c(0.1, 1.0, 0.1, 1.0), c(0.1, 1.0, 0.1, 1.0), Pattern::solid(6.0 + 2.0 * 2.0 + 3.0 * 2.0));
+    let shadow = Style {
+        near_start: c(0.3, 0.3, 1.0, 0.9), near_end: c(0.3, 0.3, 1.0, 0.9),
+        far_start: c(0.3, 0.3, 1.0, 0.0), far_end: c(0.3, 0.3, 1.0, 0.0),
+        dist_from: 0.0, dist_to: 10.0, pattern: None, distance_field: false,
+    };
+
+    // SdfEdgeCanvas order: each style applied to both edges, front-to-back.
+    let edges = [&fwd, &mir];
+    let layers = [&stroke, &outline, &border, &shadow];
+    let mut scene: Vec<(&crate::drawable::Drawable, &Style)> = Vec::new();
+    for s in layers {
+        for e in edges {
+            scene.push((e, s));
+        }
+    }
+
+    let pixels = renderer.render_full(&scene, width, height, zoom, scale, true);
+    std::fs::create_dir_all("../out").ok();
+    save_rgba_png("../out/edge_artifact.png", width, height, &pixels, [26, 26, 31]);
+
+    // 4x nearest-neighbor upscale so 1px seams are visible to the eye.
+    let f = 4u32;
+    let mut big = vec![[0u8; 4]; (width * f * height * f) as usize];
+    for y in 0..height * f {
+        for x in 0..width * f {
+            big[(y * width * f + x) as usize] = pixels[((y / f) * width + (x / f)) as usize];
+        }
+    }
+    save_rgba_png("../out/edge_artifact_4x.png", width * f, height * f, &big, [26, 26, 31]);
+
+    // Programmatic seam scan: at every 16px tile boundary, compare the boundary
+    // row/col to its immediate interior neighbor; flag large jumps that the
+    // neighbor-of-neighbor does not show (i.e. a 1px anomaly, not a real edge).
+    let px = |x: u32, y: u32| pixels[(y * width + x) as usize];
+    let diff = |a: [u8; 4], b: [u8; 4]| {
+        (0..4).map(|c| (a[c] as i32 - b[c] as i32).abs()).max().unwrap()
+    };
+    let mut seams = Vec::new();
+    for by in (16..height).step_by(16) {
+        for x in 0..width {
+            let across = diff(px(x, by - 1), px(x, by));
+            let below = diff(px(x, by), px(x, (by + 1).min(height - 1)));
+            let above = diff(px(x, by - 2), px(x, by - 1));
+            // A seam: the boundary step is much larger than the gradient just
+            // above/below it (a real edge would ramp smoothly across rows).
+            if across > 24 && across > above * 2 + 8 && across > below * 2 + 8 {
+                seams.push(('y', x, by, across));
+            }
+        }
+    }
+    eprintln!(
+        "wrote ../out/edge_artifact.png + _4x (cs={}); horizontal-boundary seams: {} {:?}",
+        zoom * scale,
+        seams.len(),
+        &seams[..seams.len().min(12)],
+    );
+}
+
+/// Tiled variant of `bezier_stroke_edge_is_smooth` at HiDPI scale 2.0: scan the
+/// stroke's top edge in a TILED render and assert it has no wobble correlated
+/// with tile boundaries. This is the single-edge form of the reported artifact.
+#[test]
+fn bezier_stroke_edge_is_smooth_tiled_hidpi() {
+    let renderer = TestRenderer::new();
+    let width = 512u32;
+    let height = 384u32;
+    let scale = 2.0_f32;
+    let extent = 160.0_f32;
+    let zoom = height.min(width) as f32 * 0.333 / extent;
+
+    let bezier = Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0]);
+    let stroke = Style::arc_gradient_stroke(
+        iced::Color::from_rgba(0.2, 0.85, 1.0, 1.0),
+        iced::Color::from_rgba(0.6, 0.2, 1.0, 1.0),
+        Pattern::solid(6.0),
+    );
+    let drawables: Vec<(&crate::drawable::Drawable, &Style)> = vec![(&bezier, &stroke)];
+
+    let pixels = renderer.render_full(&drawables, width, height, zoom, scale, true);
+
+    let mut edge_positions: Vec<(u32, f32)> = Vec::new();
+    let x_start = (width as f32 * 0.35) as u32;
+    let x_end = (width as f32 * 0.65) as u32;
+    for x in x_start..x_end {
+        let mut edge_y = None;
+        for y in 0..height - 1 {
+            let a0 = TestRenderer::pixel_at(&pixels, width, x, y)[3];
+            let a1 = TestRenderer::pixel_at(&pixels, width, x, y + 1)[3];
+            if a0 < 128 && a1 >= 128 {
+                let t = (128.0 - a0 as f32) / (a1 as f32 - a0 as f32);
+                edge_y = Some(y as f32 + t);
+                break;
+            }
+        }
+        if let Some(ey) = edge_y {
+            edge_positions.push((x, ey));
+        }
+    }
+    assert!(edge_positions.len() > 10, "not enough edge positions");
+
+    let mut wobbles = Vec::new();
+    for i in 1..edge_positions.len() - 1 {
+        let (x, y_prev) = edge_positions[i - 1];
+        let (_, y_curr) = edge_positions[i];
+        let (_, y_next) = edge_positions[i + 1];
+        let accel = (y_next - 2.0 * y_curr + y_prev).abs();
+        if accel > 0.15 {
+            wobbles.push((x, y_curr, accel));
+        }
+    }
+    assert!(
+        wobbles.is_empty(),
+        "tiled stroke edge wobbles at {} points (scale {scale}): {:?}",
+        wobbles.len(),
+        &wobbles[..wobbles.len().min(10)],
+    );
+}
+
+/// The spatial-index tile grid is an internal optimization: rendering the same
+/// content must not depend on where the tile boundaries fall. We render a
+/// multi-edge, multi-style scene (the edge editor's failure case) twice with
+/// the tile grid shifted by 8 physical px and the camera compensated so the
+/// content lands on the exact same pixels. Any per-pixel difference is a
+/// tile-alignment artifact (e.g. AA derivatives evaluated across a tile
+/// boundary). Reproduces the 1px seam seen in the sdf_basic edge editor.
+#[test]
+fn tiling_alignment_is_invisible() {
+    let r = TestRenderer::new();
+    let (w, h) = (256u32, 256u32);
+    let zoom = 0.7_f32;
+    let scale = 2.0_f32; // 4K-style HiDPI, as in the bug report
+    let cs = zoom * scale;
+
+    // Two crossing S-curves, the edge editor's default content.
+    let e1 = Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0]);
+    let e2 = Curve::bezier([120.0, -40.0], [40.0, -40.0], [-40.0, 40.0], [-120.0, 40.0]);
+    let stroke = Style::arc_gradient_stroke(
+        iced::Color::from_rgba(0.2, 0.85, 1.0, 1.0),
+        iced::Color::from_rgba(0.6, 0.2, 1.0, 1.0),
+        Pattern::solid(6.0),
+    );
+    let outline = Style::stroke(iced::Color::from_rgba(0.05, 0.05, 0.15, 1.0), Pattern::solid(8.4));
+    let border = Style::arc_gradient_stroke(
+        iced::Color::from_rgba(0.95, 0.75, 0.2, 1.0),
+        iced::Color::from_rgba(1.0, 0.3, 0.2, 1.0),
+        Pattern::solid(16.0),
+    );
+    // SdfEdgeCanvas applies each style to every edge -> same-style adjacency.
+    let scene: Vec<(&crate::drawable::Drawable, &Style)> = vec![
+        (&e1, &border), (&e2, &border),
+        (&e1, &outline), (&e2, &outline),
+        (&e1, &stroke), (&e2, &stroke),
+    ];
+
+    let cam_a = [w as f32 * 0.5 / cs, h as f32 * 0.5 / cs];
+    let a = r.render_scene_phys(&scene, w, h, zoom, scale, [0.0, 0.0], [w, h], cam_a);
+
+    // Shift the tile grid by -8px and compensate the camera by +8/cs world
+    // units so identical content lands on identical pixels.
+    let shift = 8.0_f32;
+    let cam_b = [cam_a[0] + shift / cs, cam_a[1] + shift / cs];
+    let b = r.render_scene_phys(
+        &scene, w, h, zoom, scale, [-shift, -shift], [w + 16, h + 16], cam_b,
+    );
+
+    let mut n_diff = 0u32;
+    let mut max_diff = 0i32;
+    let mut first: Vec<(u32, u32)> = Vec::new();
+    for i in 0..(w * h) as usize {
+        let mut px_diff = 0;
+        for c in 0..4 {
+            px_diff = px_diff.max((a[i][c] as i32 - b[i][c] as i32).abs());
+        }
+        if px_diff > max_diff {
+            max_diff = px_diff;
+        }
+        if px_diff > 2 {
+            n_diff += 1;
+            if first.len() < 20 {
+                first.push((i as u32 % w, i as u32 / w));
+            }
+        }
+    }
+    assert_eq!(
+        n_diff, 0,
+        "tile-grid alignment changed {n_diff} pixels (max channel diff {max_diff}); \
+         tiling must be invisible. First diffs (x,y): {first:?}",
     );
 }
