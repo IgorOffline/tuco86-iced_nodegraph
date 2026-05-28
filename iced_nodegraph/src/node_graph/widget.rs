@@ -35,7 +35,7 @@ use crate::{
     node_pin::NodePinState,
     style::{EdgeConfig, EdgeStatus, EdgeStyle, GraphStyle, NodeConfig, NodeStatus, NodeStyle, PinConfig, PinStatus, PinStyle},
 };
-use iced_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style};
+use iced_sdf::{Curve, Drawable, Pattern, SdfPrimitive, ShapeBuilder, Style};
 
 use iced::Color;
 
@@ -45,6 +45,18 @@ const PIN_CLICK_THRESHOLD: f32 = 8.0;
 /// Length of bezier control point segments (in world-space pixels).
 /// Controls how far control points extend from pins along their tangent direction.
 const BEZIER_SEGMENT_LENGTH: f32 = 80.0;
+
+/// Adaptively pick the control-point length for an edge so the bezier never
+/// overshoots the other endpoint. With a fixed 80px length, two pins placed
+/// 20px apart would have control points 80px past each other, curling the
+/// curve into a tight loop that the SDF cannot resolve cleanly and the cull
+/// drops along the inner side. Clamp to ≈half the endpoint distance.
+fn adaptive_bezier_length(start: [f32; 2], end: [f32; 2]) -> f32 {
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let d = (dx * dx + dy * dy).sqrt();
+    BEZIER_SEGMENT_LENGTH.min(d * 0.5).max(1.0)
+}
 
 /// Line width for the edge cutting overlay (in world-space pixels).
 const EDGE_CUT_LINE_WIDTH: f32 = 3.0;
@@ -100,6 +112,50 @@ fn world_bbox_to_screen_bounds(
     ]
 }
 
+/// Walks one perimeter edge of length `length`, inserting half-circle cutouts
+/// (CCW, sweeping inward) at each `(offset_from_edge_start, radius)` pin.
+/// `pins` must be sorted by offset ascending. Heading is preserved across each
+/// cutout (turn +90° → arc -180° → turn +90° nets back to original).
+fn edge_with_pin_cutouts(mut s: ShapeBuilder, length: f32, pins: &[(f32, f32)]) -> ShapeBuilder {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    let mut pos = 0.0;
+    for &(offset, pr) in pins {
+        let gap = offset - pr - pos;
+        if gap > 0.01 { s = s.line(gap); }
+        s = s.angle(FRAC_PI_2).arc(pr, -PI).angle(FRAC_PI_2);
+        pos = offset + pr;
+    }
+    let rem = length - pos;
+    if rem > 0.01 { s = s.line(rem); }
+    s
+}
+
+/// Constructs the closed outline of a node as a rounded rectangle with
+/// half-circle cutouts at each pin position. Used for both fill and border so
+/// the pins appear to puncture the node body.
+#[allow(clippy::too_many_arguments)]
+fn build_node_outline(
+    node_x: f32, node_y: f32, node_w: f32, node_h: f32, corner_radius: f32,
+    pins_top: &[(f32, f32)], pins_right: &[(f32, f32)],
+    pins_bottom: &[(f32, f32)], pins_left: &[(f32, f32)],
+) -> Drawable {
+    use std::f32::consts::FRAC_PI_2;
+    let cr = corner_radius.min(node_w * 0.5).min(node_h * 0.5).max(0.0);
+    let w = (node_w - 2.0 * cr).max(0.0);
+    let h = (node_h - 2.0 * cr).max(0.0);
+
+    let mut s = Curve::shape([node_x + cr, node_y], FRAC_PI_2);
+    s = edge_with_pin_cutouts(s, w, pins_top);
+    s = s.arc(cr, FRAC_PI_2);
+    s = edge_with_pin_cutouts(s, h, pins_right);
+    s = s.arc(cr, FRAC_PI_2);
+    s = edge_with_pin_cutouts(s, w, pins_bottom);
+    s = s.arc(cr, FRAC_PI_2);
+    s = edge_with_pin_cutouts(s, h, pins_left);
+    s = s.arc(cr, FRAC_PI_2);
+    s.close()
+}
+
 /// Returns the tangent direction vector for a pin side.
 /// Left=(-1,0), Right=(1,0), Top=(0,-1), Bottom=(0,1)
 fn pin_side_direction(side: u32) -> [f32; 2] {
@@ -129,8 +185,9 @@ fn edge_drawable(
             // Bezier: compute control points from pin tangent directions
             let dir_from = pin_side_direction(start_side);
             let dir_to = pin_side_direction(end_side);
-            let cp0 = [p0[0] + dir_from[0] * BEZIER_SEGMENT_LENGTH, p0[1] + dir_from[1] * BEZIER_SEGMENT_LENGTH];
-            let cp1 = [p1[0] + dir_to[0] * BEZIER_SEGMENT_LENGTH, p1[1] + dir_to[1] * BEZIER_SEGMENT_LENGTH];
+            let l = adaptive_bezier_length(p0, p1);
+            let cp0 = [p0[0] + dir_from[0] * l, p0[1] + dir_from[1] * l];
+            let cp1 = [p1[0] + dir_to[0] * l, p1[1] + dir_to[1] * l];
             Curve::bezier(p0, cp0, cp1, p1)
         }
     }
@@ -158,10 +215,11 @@ fn edge_screen_bounds(
             start.y.max(end.y),
         ),
         _ => {
-            let cp0x = start.x + dir_from[0] * BEZIER_SEGMENT_LENGTH;
-            let cp0y = start.y + dir_from[1] * BEZIER_SEGMENT_LENGTH;
-            let cp1x = end.x + dir_to[0] * BEZIER_SEGMENT_LENGTH;
-            let cp1y = end.y + dir_to[1] * BEZIER_SEGMENT_LENGTH;
+            let l = adaptive_bezier_length([start.x, start.y], [end.x, end.y]);
+            let cp0x = start.x + dir_from[0] * l;
+            let cp0y = start.y + dir_from[1] * l;
+            let cp1x = end.x + dir_to[0] * l;
+            let cp1y = end.y + dir_to[1] * l;
             (
                 start.x.min(end.x).min(cp0x).min(cp1x),
                 start.y.min(end.y).min(cp0y).min(cp1y),
@@ -868,16 +926,93 @@ where
             let node_position: WorldPoint =
                 (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
             let node_size = node_layout.bounds().size();
-            let node_center = [
-                node_position.x + node_size.width * 0.5,
-                node_position.y + node_size.height * 0.5,
-            ];
-            let node_half_size = [node_size.width * 0.5, node_size.height * 0.5];
             let corner_radius = resolved.corner_radius;
             let opacity = resolved.opacity;
             let cam_x = render_context.camera_position.x;
             let cam_y = render_context.camera_position.y;
             let cam_zoom = render_context.camera_zoom;
+
+            // Gather pins once and project them into per-edge cutout offsets so
+            // the body outline can puncture itself at every pin position.
+            let pins = find_pins(node_tree, node_layout);
+            let cr_clamped = corner_radius
+                .min(node_size.width * 0.5)
+                .min(node_size.height * 0.5)
+                .max(0.0);
+            let edge_w = (node_size.width - 2.0 * cr_clamped).max(0.0);
+            let edge_h = (node_size.height - 2.0 * cr_clamped).max(0.0);
+            let mut cuts_top: Vec<(f32, f32)> = Vec::new();
+            let mut cuts_right: Vec<(f32, f32)> = Vec::new();
+            let mut cuts_bottom: Vec<(f32, f32)> = Vec::new();
+            let mut cuts_left: Vec<(f32, f32)> = Vec::new();
+            for (pin_idx, (_pin_index, pin_state, (pos_a, pos_b))) in pins.iter().enumerate() {
+                let is_valid_target = is_edge_dragging
+                    && state.valid_drop_targets.contains(&(node_index, pin_idx));
+                let pin_status = if is_valid_target {
+                    PinStatus::ValidTarget
+                } else {
+                    PinStatus::Idle
+                };
+                let pin_style = if let Some(ref style_fn) = self.pin_style_fn {
+                    style_fn(theme, pin_status, resolved_pin_defaults)
+                } else {
+                    resolved_pin_defaults
+                };
+                let indicator_r = pin_style.scaled_radius(pin_status, time) * 0.4;
+                let cutout_r = indicator_r + pin_style.border_width;
+                let push = |list: &mut Vec<(f32, f32)>, o: f32, max: f32| {
+                    if o - cutout_r > 0.01 && o + cutout_r < max - 0.01 {
+                        list.push((o, cutout_r));
+                    }
+                };
+                let sides: [(crate::PinSide, Point); 2] = if pin_state.side == crate::PinSide::Row {
+                    [
+                        (crate::PinSide::Left, *pos_a),
+                        (crate::PinSide::Right, *pos_b),
+                    ]
+                } else {
+                    [(pin_state.side, *pos_a), (pin_state.side, *pos_a)]
+                };
+                let side_count = if pin_state.side == crate::PinSide::Row { 2 } else { 1 };
+                for (side, pos) in &sides[..side_count] {
+                    let wx = pos.x + offset.x;
+                    let wy = pos.y + offset.y;
+                    match side {
+                        crate::PinSide::Top => push(
+                            &mut cuts_top,
+                            wx - (node_position.x + cr_clamped),
+                            edge_w,
+                        ),
+                        crate::PinSide::Right => push(
+                            &mut cuts_right,
+                            wy - (node_position.y + cr_clamped),
+                            edge_h,
+                        ),
+                        crate::PinSide::Bottom => push(
+                            &mut cuts_bottom,
+                            (node_position.x + node_size.width - cr_clamped) - wx,
+                            edge_w,
+                        ),
+                        crate::PinSide::Left => push(
+                            &mut cuts_left,
+                            (node_position.y + node_size.height - cr_clamped) - wy,
+                            edge_h,
+                        ),
+                        crate::PinSide::Row => unreachable!(),
+                    }
+                }
+            }
+            cuts_top.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            cuts_right.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            cuts_bottom.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            cuts_left.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+            let node_outline = build_node_outline(
+                node_position.x, node_position.y,
+                node_size.width, node_size.height,
+                corner_radius,
+                &cuts_top, &cuts_right, &cuts_bottom, &cuts_left,
+            );
 
             // Layer 4a: Node Fill
             let fill_pad = 2.0 / cam_zoom;
@@ -893,7 +1028,7 @@ where
                 renderer.with_layer(layout.bounds(), |renderer| {
                     let mut fill_batch = SdfPrimitive::new();
                     fill_batch.push(
-                        &Curve::rounded_rect(node_center, node_half_size, corner_radius),
+                        &node_outline,
                         &Style::solid(color_with_opacity(resolved.fill_color, opacity)),
                         fb,
                     );
@@ -941,7 +1076,6 @@ where
             });
 
             // Layer 4c: Node Foreground (border + pins batched)
-            let pins = find_pins(node_tree, node_layout);
             let has_border = resolved.border.as_ref().is_some_and(|b| b.pattern.thickness > 0.0);
             let has_pins = !pins.is_empty();
 
@@ -963,10 +1097,8 @@ where
                             border_pad, &render_context,
                         );
 
-                        let border_shape = Curve::rounded_rect(node_center, node_half_size, corner_radius);
-
                         fg_batch.push(
-                            &border_shape,
+                            &node_outline,
                             &Style::stroke(
                                 color_with_opacity(node_border.color, opacity),
                                 node_border.pattern,
@@ -978,7 +1110,7 @@ where
                             && ow > 0.0 && oc.a > 0.0
                         {
                             fg_batch.push(
-                                &border_shape,
+                                &node_outline,
                                 &Style::stroke(
                                     color_with_opacity(oc, opacity),
                                     Pattern::solid(bw + ow * 2.0),
@@ -1231,11 +1363,20 @@ where
             state.camera_initialized = true;
         }
 
-        // Synchronize external selection with internal state
+        // Sync the externally-provided selection (`.selection()`) into state
+        // only when the host changed it since we last looked. Comparing
+        // against `state.selected_nodes` directly would also fire when the
+        // widget itself just modified the state (box-select drag, click etc.)
+        // and the matching `on_select` message has not yet propagated back
+        // through the host into a refreshed `external_selection` — that race
+        // would clobber the new state with a stale external value, breaking
+        // any host that uses `.selection()`.
         if let Some(external) = self.get_external_selection()
-            && state.selected_nodes != *external {
-                state.selected_nodes = external.clone();
-            }
+            && state.last_synced_external.as_ref() != Some(external)
+        {
+            state.selected_nodes = external.clone();
+            state.last_synced_external = Some(external.clone());
+        }
 
         // Update time for animations
         // Cap delta to prevent large time jumps when app is in background
@@ -1465,13 +1606,16 @@ where
                                             // Calculate bezier control points
                                             let dir_from = pin_side_to_direction(from_side);
                                             let dir_to = pin_side_to_direction(to_side);
+                                            let l = adaptive_bezier_length(
+                                                [p0.x, p0.y], [p3.x, p3.y],
+                                            );
                                             let p1 = Point::new(
-                                                p0.x + dir_from.0 * BEZIER_SEGMENT_LENGTH,
-                                                p0.y + dir_from.1 * BEZIER_SEGMENT_LENGTH,
+                                                p0.x + dir_from.0 * l,
+                                                p0.y + dir_from.1 * l,
                                             );
                                             let p2 = Point::new(
-                                                p3.x + dir_to.0 * BEZIER_SEGMENT_LENGTH,
-                                                p3.y + dir_to.1 * BEZIER_SEGMENT_LENGTH,
+                                                p3.x + dir_to.0 * l,
+                                                p3.y + dir_to.1 * l,
                                             );
 
                                             // Check if cutting line intersects this bezier edge

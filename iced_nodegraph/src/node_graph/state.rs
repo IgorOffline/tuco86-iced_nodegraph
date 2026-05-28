@@ -38,6 +38,12 @@ pub(super) struct NodeGraphState {
     pub(super) time: f32,
     pub(super) last_update: Option<Instant>,
     pub(super) selected_nodes: HashSet<usize>,
+    /// Last externally-provided selection (via `NodeGraph::selection()`) that
+    /// we synced into `selected_nodes`. Lets us tell apart "host pushed a new
+    /// selection" (sync needed) from "internal box-select just changed state
+    /// but the host has not yet seen the on_select message" (sync would clobber
+    /// the new state with the still-stale external value).
+    pub(super) last_synced_external: Option<HashSet<usize>>,
     pub(super) modifiers: keyboard::Modifiers,
     /// Tracks if left mouse button is pressed (for Fruit Ninja edge cutting)
     pub(super) left_mouse_down: bool,
@@ -61,6 +67,7 @@ impl Default for NodeGraphState {
             time: 0.0,
             last_update: None,
             selected_nodes: HashSet::new(),
+            last_synced_external: None,
             modifiers: keyboard::Modifiers::default(),
             left_mouse_down: false,
             valid_drop_targets: HashSet::new(),
