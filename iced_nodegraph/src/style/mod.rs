@@ -11,7 +11,7 @@
 //!   are resolved from Config + Theme at render time via `from_theme()`.
 //!
 //! Edge and node styling uses `iced_sdf::Pattern` for stroke patterns (solid,
-//! dashed, dotted, arrowed) and `iced_sdf::Layer` for composited rendering.
+//! dashed, dotted, arrowed) and `iced_sdf::Style` for composited rendering.
 
 use iced::{Color, Theme};
 use iced_sdf::Pattern;
@@ -923,7 +923,7 @@ impl EdgeBorder {
 // Edge Style
 // ============================================================================
 
-/// Style configuration for edges using iced_sdf Pattern and Layer.
+/// Style configuration for edges using iced_sdf Pattern and Style.
 ///
 /// # Example
 /// ```rust

@@ -48,18 +48,12 @@ pub enum EdgeSection {
 }
 
 /// Pattern type for simple selection (maps to iced_sdf::Pattern)
-/// Pattern type selection aligned with iced_sdf's PatternType variants.
-///
-/// `Dashed` always uses `dashed_angle()` with an angle parameter (0 = square caps).
-/// `DashCapped` uses `dash_capped_angle()` for round-capped dashes with angle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PatternType {
     #[default]
     Solid,
-    /// Square-capped dashes with configurable angle (0 = perpendicular caps)
+    /// Dashes with configurable angle (0 = perpendicular caps)
     Dashed,
-    /// Round-capped dashes with configurable angle
-    DashCapped,
     /// Arrow-like marks (///) crossing the edge
     Arrowed,
     Dotted,
@@ -231,8 +225,7 @@ impl EdgeConfigInputs {
         let mut p = match pattern_type {
             PatternType::Solid => Pattern::solid(thickness),
             PatternType::Dashed => Pattern::dashed_angle(thickness, dash, gap, angle),
-            PatternType::DashCapped => Pattern::dash_capped_angle(thickness, dash, gap, angle),
-            PatternType::Arrowed => Pattern::arrowed(thickness, dash, gap, angle),
+            PatternType::Arrowed => Pattern::arrowed_angle(thickness, dash, gap, angle),
             PatternType::Dotted => Pattern::dotted(gap + dot_radius * 2.0, dot_radius),
             PatternType::DashDotted => Pattern::dash_dotted(thickness, dash, gap, dot_radius),
         };
@@ -283,7 +276,6 @@ where
     let pattern_label = match inputs.get_pattern_type() {
         PatternType::Solid => "solid",
         PatternType::Dashed => "dashed",
-        PatternType::DashCapped => "capped",
         PatternType::Arrowed => "arrowed",
         PatternType::Dotted => "dotted",
         PatternType::DashDotted => "dash-dot",

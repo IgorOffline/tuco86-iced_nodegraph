@@ -202,8 +202,8 @@ impl Application {
                 text(format!("Nodes: {}", self.nodes.len())).size(14),
                 text(format!("Edges: {}", self.edges.len())).size(14),
                 text(format!(
-                    "SDF: {} shapes, {} tiles, {}us CPU",
-                    sdf.shape_count, sdf.tile_count, sdf.prepare_cpu_us
+                    "SDF: {} entries, {} tiles, {}us CPU",
+                    sdf.entry_count, sdf.tile_count, sdf.prepare_cpu_us
                 ))
                 .size(12),
                 text("Scroll: Zoom | Middle-drag: Pan").size(12),

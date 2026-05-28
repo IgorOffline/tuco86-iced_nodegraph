@@ -140,6 +140,212 @@ impl TestRenderer {
         self.render_full(drawables, width, height, zoom, 1.0, use_tiles)
     }
 
+    /// Render with non-zero `bounds_origin` (logical pixels). The tile grid
+    /// covers `[bounds_origin, bounds_origin + (grid_w, grid_h)]` and the
+    /// caller is responsible for adjusting `camera_position` so world coords
+    /// land at the intended screen pixels.
+    #[allow(clippy::too_many_arguments)]
+    fn render_with_origin(
+        &self,
+        drawables: &[(&crate::drawable::Drawable, &Style)],
+        width: u32,
+        height: u32,
+        zoom: f32,
+        bounds_origin_logical: [f32; 2],
+        grid_w: u32,
+        grid_h: u32,
+        camera_position: [f32; 2],
+    ) -> Vec<[u8; 4]> {
+        let mut gpu_segments = Vec::new();
+        let mut gpu_entries = Vec::new();
+        let mut gpu_styles = Vec::new();
+
+        for (i, (drawable, style)) in drawables.iter().enumerate() {
+            let seg_offset = gpu_segments.len() as u32;
+            let (mut entry, gpu_style) =
+                compile_drawable(drawable, style, i as u32, 0, &mut gpu_segments);
+            entry.style_idx = gpu_styles.len() as u32;
+            entry.segment_start = seg_offset;
+            gpu_entries.push(entry);
+            gpu_styles.push(gpu_style);
+        }
+
+        let scale = 1.0_f32;
+        let grid_cols = (grid_w as f32 / TILE_SIZE).ceil() as u32;
+        let grid_rows = (grid_h as f32 / TILE_SIZE).ceil() as u32;
+        let total_tiles = grid_cols * grid_rows;
+
+        let draw_data = DrawData {
+            bounds_origin: GpuVec2::new(
+                bounds_origin_logical[0] * scale,
+                bounds_origin_logical[1] * scale,
+            ),
+            camera_position: GpuVec2::new(camera_position[0], camera_position[1]),
+            camera_zoom: zoom,
+            scale_factor: scale,
+            time: 0.0,
+            debug_flags: 0,
+            entry_count: gpu_entries.len() as u32,
+            entry_start: 0,
+            grid_cols,
+            grid_rows,
+            tile_base: 0,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
+        };
+
+        self.execute_render(
+            &gpu_entries, &gpu_segments, &gpu_styles,
+            draw_data, total_tiles, width, height, grid_cols, grid_rows,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn execute_render(
+        &self,
+        gpu_entries: &[crate::pipeline::types::GpuDrawEntry],
+        gpu_segments: &[crate::pipeline::types::GpuSegment],
+        gpu_styles: &[crate::pipeline::types::GpuStyle],
+        draw_data: DrawData,
+        total_tiles: u32,
+        width: u32,
+        height: u32,
+        grid_cols: u32,
+        grid_rows: u32,
+    ) -> Vec<[u8; 4]> {
+        let draws_buf = self.create_storage(&[draw_data]);
+        let entries_buf = self.create_storage(gpu_entries);
+        let segments_buf = self.create_storage(gpu_segments);
+        let styles_buf = self.create_storage(gpu_styles);
+
+        let tile_counts_buf = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: (total_tiles.max(1) as u64) * 4,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let tile_slots_buf = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: (total_tiles.max(1) as u64) * (SLOT_STRIDE as u64) * 4,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let compute_uniforms = ComputeUniforms { draw_index: 0, _pad0: 0, _pad1: 0, _pad2: 0 };
+        let cu_buf = self.create_uniform(&compute_uniforms);
+
+        let render_bg = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.render_group0_layout,
+            entries: &[
+                BindGroupEntry { binding: 0, resource: draws_buf.as_entire_binding() },
+                BindGroupEntry { binding: 1, resource: entries_buf.as_entire_binding() },
+                BindGroupEntry { binding: 2, resource: segments_buf.as_entire_binding() },
+                BindGroupEntry { binding: 3, resource: styles_buf.as_entire_binding() },
+                BindGroupEntry { binding: 4, resource: tile_counts_buf.as_entire_binding() },
+                BindGroupEntry { binding: 5, resource: tile_slots_buf.as_entire_binding() },
+            ],
+        });
+        let compute_bg0 = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group0_layout,
+            entries: &[
+                BindGroupEntry { binding: 0, resource: draws_buf.as_entire_binding() },
+                BindGroupEntry { binding: 1, resource: entries_buf.as_entire_binding() },
+                BindGroupEntry { binding: 2, resource: segments_buf.as_entire_binding() },
+                BindGroupEntry { binding: 3, resource: styles_buf.as_entire_binding() },
+            ],
+        });
+        let compute_bg1 = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group1_layout,
+            entries: &[
+                BindGroupEntry { binding: 0, resource: cu_buf.as_entire_binding() },
+                BindGroupEntry { binding: 1, resource: tile_counts_buf.as_entire_binding() },
+                BindGroupEntry { binding: 2, resource: tile_slots_buf.as_entire_binding() },
+            ],
+        });
+
+        let texture = self.device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&TextureViewDescriptor::default());
+
+        let row_bytes = width * 4;
+        let padded_row = (row_bytes + 255) & !255;
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: (padded_row * height) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
+        if grid_cols > 0 && grid_rows > 0 {
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            pass.set_pipeline(&self.compute_pipeline);
+            pass.set_bind_group(0, &compute_bg0, &[]);
+            pass.set_bind_group(1, &compute_bg1, &[]);
+            pass.dispatch_workgroups(grid_cols.div_ceil(16), grid_rows.div_ceil(16), 1);
+        }
+        {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations { load: LoadOp::Clear(Color::TRANSPARENT), store: StoreOp::Store },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.render_pipeline);
+            pass.set_bind_group(0, &render_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        encoder.copy_texture_to_buffer(
+            TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: Origin3d::ZERO, aspect: TextureAspect::All },
+            TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+        let sub_idx = self.queue.submit(Some(encoder.finish()));
+
+        let slice = readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(sub_idx),
+            timeout: Some(std::time::Duration::from_secs(5)),
+        }).unwrap();
+        let data = slice.get_mapped_range();
+        let mut pixels = vec![[0u8; 4]; (width * height) as usize];
+        for y in 0..height {
+            let src_offset = (y * padded_row) as usize;
+            let dst_offset = (y * width) as usize;
+            for x in 0..width as usize {
+                let i = src_offset + x * 4;
+                pixels[dst_offset + x] = [data[i], data[i + 1], data[i + 2], data[i + 3]];
+            }
+        }
+        pixels
+    }
+
     fn render_full(
         &self,
         drawables: &[(&crate::drawable::Drawable, &Style)],
@@ -1050,5 +1256,192 @@ fn distance_field_shows_both_sides() {
         above[0..3], below[0..3],
         "Distance field should show different colors on each side of the line. \
          Above: {above:?}, Below: {below:?}",
+    );
+}
+
+/// Regression: when a draw_primitive uses a non-zero `bounds_origin`
+/// (e.g. clipped per-shape draws inside a larger widget), the rendered shape
+/// must appear at the SAME screen position as when `bounds_origin` is zero,
+/// provided the caller compensates by shifting `camera_position` by
+/// `-bounds_origin / zoom` (in world units).
+///
+/// This locks in the camera-adjustment fix in iced_nodegraph's widget so it
+/// can't silently regress if the shader's local-pixel convention changes.
+#[test]
+fn bounds_origin_shift_preserves_shape_position() {
+    let renderer = TestRenderer::new();
+    let width = 256u32;
+    let height = 128u32;
+    let zoom = 1.0;
+
+    // Shape at world (0, 0). With bounds_origin=(0,0) and camera centering
+    // world on screen, the shape lands at screen center.
+    let shape = Curve::rounded_rect([0.0, 0.0], [40.0, 25.0], 6.0);
+    let style = Style::solid(iced::Color::from_rgb(1.0, 0.0, 0.0));
+
+    let cs = zoom;
+    let cam_centered = [(width as f32) * 0.5 / cs, (height as f32) * 0.5 / cs];
+
+    // Baseline: grid covers full texture, bounds_origin = (0, 0).
+    let baseline = renderer.render_with_origin(
+        &[(&shape, &style)],
+        width, height, zoom,
+        [0.0, 0.0],
+        width, height,
+        cam_centered,
+    );
+
+    // Shifted: bounds_origin at (50, 30), grid sized to still cover the
+    // shape, camera shifted by -bounds_origin/zoom in world units (which the
+    // widget computes as widget_origin - draw_bounds.origin = -bounds for a
+    // zero-origin widget).
+    let bounds_x = 50.0_f32;
+    let bounds_y = 30.0_f32;
+    let cam_shifted = [
+        cam_centered[0] - bounds_x / zoom,
+        cam_centered[1] - bounds_y / zoom,
+    ];
+    let shifted = renderer.render_with_origin(
+        &[(&shape, &style)],
+        width, height, zoom,
+        [bounds_x, bounds_y],
+        width - bounds_x as u32,
+        height - bounds_y as u32,
+        cam_shifted,
+    );
+
+    // Sample a row of pixels through the shape center on both images.
+    // The shape should appear at the same screen position in both.
+    let cy = (height / 2) as u32;
+    let mut mismatches = Vec::new();
+    for x in 20..width - 20 {
+        let bp = TestRenderer::pixel_at(&baseline, width, x, cy);
+        let sp = TestRenderer::pixel_at(&shifted, width, x, cy);
+        // Allow tiny AA differences at edges, but a full miss = shape moved.
+        let diff_a = (bp[3] as i32 - sp[3] as i32).abs();
+        if diff_a > 30 {
+            mismatches.push((x, bp[3], sp[3]));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "Shifted bounds_origin moved the shape (count={}, first 5={:?}). \
+         The shader's local-pixel coord system requires camera_position to \
+         be adjusted by -bounds_origin/zoom when bounds_origin moves.",
+        mismatches.len(),
+        &mismatches[..mismatches.len().min(5)],
+    );
+
+    // Also assert the shape is actually rendered in the shifted output
+    // (catches the case where culling kills everything).
+    let center = TestRenderer::pixel_at(&shifted, width, width / 2, cy);
+    assert!(
+        center[3] > 200,
+        "Shifted render is empty at expected shape center: {center:?}",
+    );
+}
+
+/// A stroke style on a closed rounded_rect must produce a visible border
+/// all around the shape — no missing edges or culling holes along the contour.
+#[test]
+fn closed_stroke_border_complete() {
+    let renderer = TestRenderer::new();
+    let width = 256u32;
+    let height = 128u32;
+    let zoom = 1.0;
+
+    let shape = Curve::rounded_rect([0.0, 0.0], [80.0, 40.0], 10.0);
+    let style = Style::stroke(iced::Color::WHITE, Pattern::solid(3.0));
+
+    let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
+
+    // Sample exactly along the border (y = top of shape, x = right of shape).
+    // Top border: world y = -40, screen y = height/2 - 40 = 24.
+    // Sample x along the top edge from -70..70 world (away from corners).
+    let cy = (height as i32 / 2) as u32; // center of screen
+    let top_y = (cy as i32 - 40) as u32;
+    let mut gaps = Vec::new();
+    for dx in -70..=70 {
+        let sx = (width as i32 / 2 + dx) as u32;
+        let px = TestRenderer::pixel_at(&pixels, width, sx, top_y);
+        if px[3] < 100 {
+            gaps.push((dx, px[3]));
+        }
+    }
+    assert!(
+        gaps.is_empty(),
+        "Stroke border has missing pixels on top edge: count={}, first 5={:?}",
+        gaps.len(),
+        &gaps[..gaps.len().min(5)],
+    );
+}
+
+/// A large closed rounded_rect with Style::solid must fill its interior
+/// completely — interior tiles many tile-widths from any boundary must
+/// not be culled.
+#[test]
+fn closed_solid_fill_large_no_interior_holes() {
+    let renderer = TestRenderer::new();
+    let width = 512u32;
+    let height = 256u32;
+    let zoom = 1.0;
+
+    // Center is ~100 px from the nearest boundary (many tile widths).
+    let shape = Curve::rounded_rect([0.0, 0.0], [200.0, 100.0], 12.0);
+    let style = Style::solid(iced::Color::from_rgb(1.0, 0.0, 0.0));
+
+    let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
+
+    // Sample interior points well away from any boundary.
+    let mut holes = Vec::new();
+    for dy in (-80..=80).step_by(8) {
+        for dx in (-180..=180).step_by(8) {
+            let sx = (width as i32 / 2 + dx) as u32;
+            let sy = (height as i32 / 2 + dy) as u32;
+            let px = TestRenderer::pixel_at(&pixels, width, sx, sy);
+            if px[3] < 200 {
+                holes.push((dx, dy, px[3]));
+            }
+        }
+    }
+    assert!(
+        holes.is_empty(),
+        "Interior tiles of large rounded_rect were culled (count={}): first 5 = {:?}",
+        holes.len(),
+        &holes[..holes.len().min(5)],
+    );
+}
+
+/// A closed rounded_rect with Style::solid must fill its interior completely.
+/// Tiles deep inside the shape must not be culled.
+#[test]
+fn closed_solid_fill_no_interior_holes() {
+    let renderer = TestRenderer::new();
+    let width = 128u32;
+    let height = 128u32;
+    let zoom = 1.0;
+
+    // Big enough that the center is many tiles away from any boundary.
+    let shape = Curve::rounded_rect([0.0, 0.0], [50.0, 35.0], 8.0);
+    let style = Style::solid(iced::Color::from_rgb(1.0, 0.0, 0.0));
+
+    let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
+
+    // Camera centers world (0,0) at screen (width/2, height/2).
+    // Sample a 20x20 grid of points well inside the shape: world [-30..30] x [-15..15].
+    let mut holes = Vec::new();
+    for dy in (-15..=15).step_by(3) {
+        for dx in (-30..=30).step_by(3) {
+            let sx = (width as i32 / 2 + dx) as u32;
+            let sy = (height as i32 / 2 + dy) as u32;
+            let px = TestRenderer::pixel_at(&pixels, width, sx, sy);
+            if px[3] < 200 {
+                holes.push((dx, dy, px));
+            }
+        }
+    }
+    assert!(
+        holes.is_empty(),
+        "Interior tiles of solid-filled rounded_rect were culled (showing as holes): {holes:?}",
     );
 }

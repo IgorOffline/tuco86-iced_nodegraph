@@ -217,7 +217,6 @@ where
     let on_change3 = on_change.clone();
     let on_change4 = on_change.clone();
     let on_change5 = on_change.clone();
-    let on_change6 = on_change.clone();
 
     // First row: Solid, Dashed
     let pills_row1 = row![
@@ -238,42 +237,33 @@ where
     ]
     .spacing(4);
 
-    // Second row: DashCapped (round caps), Arrowed (///)
+    // Second row: Arrowed (///), Dotted
     let pills_row2 = row![
-        pill_button(
-            "Capped",
-            PatternType::DashCapped,
-            selected,
-            on_change3(PatternType::DashCapped),
-            accent
-        ),
         pill_button(
             "Arrowed",
             PatternType::Arrowed,
             selected,
-            on_change4(PatternType::Arrowed),
+            on_change3(PatternType::Arrowed),
+            accent
+        ),
+        pill_button(
+            "Dotted",
+            PatternType::Dotted,
+            selected,
+            on_change4(PatternType::Dotted),
             accent
         ),
     ]
     .spacing(4);
 
-    // Third row: Dotted, DashDot
-    let pills_row3 = row![
-        pill_button(
-            "Dotted",
-            PatternType::Dotted,
-            selected,
-            on_change5(PatternType::Dotted),
-            accent
-        ),
-        pill_button(
-            "Dash·Dot",
-            PatternType::DashDotted,
-            selected,
-            on_change6(PatternType::DashDotted),
-            accent
-        ),
-    ]
+    // Third row: DashDot
+    let pills_row3 = row![pill_button(
+        "Dash·Dot",
+        PatternType::DashDotted,
+        selected,
+        on_change5(PatternType::DashDotted),
+        accent
+    ),]
     .spacing(4);
 
     let output_pin = container(pin!(

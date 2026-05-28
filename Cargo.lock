@@ -668,7 +668,7 @@ dependencies = [
  "console_error_panic_hook",
  "iced",
  "iced_nodegraph",
- "iced_sdf_legacy",
+ "iced_sdf",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -1485,7 +1485,7 @@ dependencies = [
  "bitflags 2.11.0",
  "euclid",
  "iced",
- "iced_sdf_legacy",
+ "iced_sdf",
  "iced_wgpu",
  "iced_widget",
  "rustc-hash 2.1.2",
@@ -1549,19 +1549,6 @@ dependencies = [
  "pollster",
  "web-time",
  "wgpu",
-]
-
-[[package]]
-name = "iced_sdf_legacy"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "encase",
- "glam 0.30.10",
- "iced",
- "iced_wgpu",
- "smallvec",
- "web-time",
 ]
 
 [[package]]
@@ -2954,22 +2941,6 @@ dependencies = [
  "iced_aw",
  "iced_sdf",
  "iced_wgpu",
- "web-time",
-]
-
-[[package]]
-name = "sdf_gallery"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "demo_common",
- "glam 0.30.10",
- "iced",
- "iced_sdf_legacy",
- "iced_wgpu",
- "js-sys",
- "wasm-bindgen",
- "web-sys",
  "web-time",
 ]
 

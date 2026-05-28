@@ -716,7 +716,6 @@ fn pattern_type_to_string(pattern: &PatternType) -> String {
     match pattern {
         PatternType::Solid => "Solid",
         PatternType::Dashed => "Dashed",
-        PatternType::DashCapped => "DashCapped",
         PatternType::Arrowed => "Arrowed",
         PatternType::Dotted => "Dotted",
         PatternType::DashDotted => "DashDotted",
@@ -727,9 +726,7 @@ fn pattern_type_to_string(pattern: &PatternType) -> String {
 fn string_to_pattern_type(s: &str) -> PatternType {
     match s {
         "Solid" => PatternType::Solid,
-        "Dashed" => PatternType::Dashed,
-        "DashCapped" => PatternType::DashCapped,
-        "Angled" => PatternType::DashCapped, // backwards compat
+        "Dashed" | "DashCapped" | "Angled" => PatternType::Dashed,
         "Arrowed" => PatternType::Arrowed,
         "Dotted" => PatternType::Dotted,
         "DashDotted" => PatternType::DashDotted,

@@ -2571,22 +2571,6 @@ mod tests {
     }
 
     #[test]
-    fn test_edge_config_inputs_pattern_type_dash_capped() {
-        use iced_nodegraph::SdfPatternType;
-
-        let mut inputs = EdgeConfigInputs::default();
-        inputs.pattern_type = Some(PatternType::DashCapped);
-
-        let config = inputs.build();
-        let pattern = config.pattern.expect("pattern should be Some");
-        assert!(
-            matches!(pattern.pattern_type, SdfPatternType::DashCapped { .. }),
-            "Expected DashCapped pattern, got {:?}",
-            pattern.pattern_type
-        );
-    }
-
-    #[test]
     fn test_edge_config_inputs_pattern_type_dash_dotted() {
         use iced_nodegraph::SdfPatternType;
 
