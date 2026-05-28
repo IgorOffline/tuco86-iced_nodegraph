@@ -35,7 +35,7 @@ use crate::{
     node_pin::NodePinState,
     style::{EdgeConfig, EdgeStatus, EdgeStyle, GraphStyle, NodeConfig, NodeStatus, NodeStyle, PinConfig, PinStatus, PinStyle},
 };
-use iced_sdf::{Curve, Drawable, Pattern, SdfPrimitive, ShapeBuilder, Style};
+use iced_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style};
 
 use iced::Color;
 
@@ -110,50 +110,6 @@ fn world_bbox_to_screen_bounds(
         screen_max_x - screen_min_x,
         screen_max_y - screen_min_y,
     ]
-}
-
-/// Walks one perimeter edge of length `length`, inserting half-circle cutouts
-/// (CCW, sweeping inward) at each `(offset_from_edge_start, radius)` pin.
-/// `pins` must be sorted by offset ascending. Heading is preserved across each
-/// cutout (turn +90° → arc -180° → turn +90° nets back to original).
-fn edge_with_pin_cutouts(mut s: ShapeBuilder, length: f32, pins: &[(f32, f32)]) -> ShapeBuilder {
-    use std::f32::consts::{FRAC_PI_2, PI};
-    let mut pos = 0.0;
-    for &(offset, pr) in pins {
-        let gap = offset - pr - pos;
-        if gap > 0.01 { s = s.line(gap); }
-        s = s.angle(FRAC_PI_2).arc(pr, -PI).angle(FRAC_PI_2);
-        pos = offset + pr;
-    }
-    let rem = length - pos;
-    if rem > 0.01 { s = s.line(rem); }
-    s
-}
-
-/// Constructs the closed outline of a node as a rounded rectangle with
-/// half-circle cutouts at each pin position. Used for both fill and border so
-/// the pins appear to puncture the node body.
-#[allow(clippy::too_many_arguments)]
-fn build_node_outline(
-    node_x: f32, node_y: f32, node_w: f32, node_h: f32, corner_radius: f32,
-    pins_top: &[(f32, f32)], pins_right: &[(f32, f32)],
-    pins_bottom: &[(f32, f32)], pins_left: &[(f32, f32)],
-) -> Drawable {
-    use std::f32::consts::FRAC_PI_2;
-    let cr = corner_radius.min(node_w * 0.5).min(node_h * 0.5).max(0.0);
-    let w = (node_w - 2.0 * cr).max(0.0);
-    let h = (node_h - 2.0 * cr).max(0.0);
-
-    let mut s = Curve::shape([node_x + cr, node_y], FRAC_PI_2);
-    s = edge_with_pin_cutouts(s, w, pins_top);
-    s = s.arc(cr, FRAC_PI_2);
-    s = edge_with_pin_cutouts(s, h, pins_right);
-    s = s.arc(cr, FRAC_PI_2);
-    s = edge_with_pin_cutouts(s, w, pins_bottom);
-    s = s.arc(cr, FRAC_PI_2);
-    s = edge_with_pin_cutouts(s, h, pins_left);
-    s = s.arc(cr, FRAC_PI_2);
-    s.close()
 }
 
 /// Returns the tangent direction vector for a pin side.
@@ -933,19 +889,12 @@ where
             let cam_y = render_context.camera_position.y;
             let cam_zoom = render_context.camera_zoom;
 
-            // Gather pins once and project them into per-edge cutout offsets so
-            // the body outline can puncture itself at every pin position.
+            // Gather pins once. Each pin punctures the body with a circular
+            // cutout centered on its border point; a single boolean difference
+            // resolves all of them, including overlapping or coincident pins
+            // (e.g. a collapsed section where pins stack on the divider).
             let pins = find_pins(node_tree, node_layout);
-            let cr_clamped = corner_radius
-                .min(node_size.width * 0.5)
-                .min(node_size.height * 0.5)
-                .max(0.0);
-            let edge_w = (node_size.width - 2.0 * cr_clamped).max(0.0);
-            let edge_h = (node_size.height - 2.0 * cr_clamped).max(0.0);
-            let mut cuts_top: Vec<(f32, f32)> = Vec::new();
-            let mut cuts_right: Vec<(f32, f32)> = Vec::new();
-            let mut cuts_bottom: Vec<(f32, f32)> = Vec::new();
-            let mut cuts_left: Vec<(f32, f32)> = Vec::new();
+            let mut cut_circles: Vec<Drawable> = Vec::new();
             for (pin_idx, (_pin_index, pin_state, (pos_a, pos_b))) in pins.iter().enumerate() {
                 let is_valid_target = is_edge_dragging
                     && state.valid_drop_targets.contains(&(node_index, pin_idx));
@@ -961,59 +910,32 @@ where
                 };
                 let indicator_r = pin_style.scaled_radius(pin_status, time) * 0.4;
                 let cutout_r = indicator_r + pin_style.border_width;
-                let push = |list: &mut Vec<(f32, f32)>, o: f32, max: f32| {
-                    if o - cutout_r > 0.01 && o + cutout_r < max - 0.01 {
-                        list.push((o, cutout_r));
-                    }
-                };
-                let sides: [(crate::PinSide, Point); 2] = if pin_state.side == crate::PinSide::Row {
-                    [
-                        (crate::PinSide::Left, *pos_a),
-                        (crate::PinSide::Right, *pos_b),
-                    ]
+                if cutout_r <= 0.01 {
+                    continue;
+                }
+                // pin_positions() already projects onto the relevant border, so
+                // each position is exactly the cutout center. Row pins yield two.
+                let positions: &[Point] = if pin_state.side == crate::PinSide::Row {
+                    &[*pos_a, *pos_b]
                 } else {
-                    [(pin_state.side, *pos_a), (pin_state.side, *pos_a)]
+                    std::slice::from_ref(pos_a)
                 };
-                let side_count = if pin_state.side == crate::PinSide::Row { 2 } else { 1 };
-                for (side, pos) in &sides[..side_count] {
-                    let wx = pos.x + offset.x;
-                    let wy = pos.y + offset.y;
-                    match side {
-                        crate::PinSide::Top => push(
-                            &mut cuts_top,
-                            wx - (node_position.x + cr_clamped),
-                            edge_w,
-                        ),
-                        crate::PinSide::Right => push(
-                            &mut cuts_right,
-                            wy - (node_position.y + cr_clamped),
-                            edge_h,
-                        ),
-                        crate::PinSide::Bottom => push(
-                            &mut cuts_bottom,
-                            (node_position.x + node_size.width - cr_clamped) - wx,
-                            edge_w,
-                        ),
-                        crate::PinSide::Left => push(
-                            &mut cuts_left,
-                            (node_position.y + node_size.height - cr_clamped) - wy,
-                            edge_h,
-                        ),
-                        crate::PinSide::Row => unreachable!(),
-                    }
+                for pos in positions {
+                    let cx = pos.x + offset.x;
+                    let cy = pos.y + offset.y;
+                    cut_circles.push(Curve::circle([cx, cy], cutout_r));
                 }
             }
-            cuts_top.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            cuts_right.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            cuts_bottom.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            cuts_left.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-            let node_outline = build_node_outline(
-                node_position.x, node_position.y,
-                node_size.width, node_size.height,
+            let body = Curve::rounded_rect(
+                [
+                    node_position.x + node_size.width * 0.5,
+                    node_position.y + node_size.height * 0.5,
+                ],
+                [node_size.width * 0.5, node_size.height * 0.5],
                 corner_radius,
-                &cuts_top, &cuts_right, &cuts_bottom, &cuts_left,
             );
+            let node_outline = iced_sdf::boolean::difference_many(&body, &cut_circles);
 
             // Layer 4a: Node Fill
             let fill_pad = 2.0 / cam_zoom;

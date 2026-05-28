@@ -182,6 +182,21 @@ impl Drawable {
         }
     }
 
+    /// Assemble a closed shape from segments produced by a boolean operation.
+    pub(crate) fn from_boolean_segments(
+        segments: Vec<Segment>, total_arc_length: f32, bounds: [f32; 4],
+    ) -> Self {
+        Self {
+            drawable_type: DrawableType::Shape,
+            segments,
+            total_arc_length,
+            bounds,
+            is_closed: true,
+            tiling_type: None,
+            tiling_params: [0.0; 4],
+        }
+    }
+
     /// Create a tiling drawable.
     pub(crate) fn new_tiling(tiling_type: TilingType, params: [f32; 4]) -> Self {
         Self {

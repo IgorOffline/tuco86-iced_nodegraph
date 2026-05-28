@@ -23,6 +23,7 @@
 //! let prim = prim.camera(cam_x, cam_y, zoom).time(elapsed);
 //! ```
 
+pub mod boolean;
 pub mod curve;
 pub mod drawable;
 pub mod pattern;
