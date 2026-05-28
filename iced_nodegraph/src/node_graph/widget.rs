@@ -966,10 +966,16 @@ where
             }
 
             // Layer 4b: Node Widgets
+            // Mirrors Container::clip(true): bound the child viewport to the
+            // graph so widgets inside nodes can't paint past the graph edge.
+            let clipped_viewport = layout
+                .bounds()
+                .intersection(viewport)
+                .unwrap_or(Rectangle::new(layout.bounds().position(), Size::ZERO));
             renderer.with_layer(layout.bounds(), |renderer| {
                 camera.draw_with::<_, Renderer>(
                     renderer,
-                    viewport,
+                    &clipped_viewport,
                     cursor,
                     |renderer, viewport, cursor| {
                         let bounds = node_layout.bounds();
@@ -1391,29 +1397,34 @@ where
             state.left_mouse_down = false;
         }
 
-        if let Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) = event {
-            if let Some(cursor_pos) = screen_cursor.position() {
-                let cursor_pos: ScreenPoint = cursor_pos.into_euclid();
+        // `position_over` rejects Levitating cursors (sibling above claimed the
+        // event in a `stack`) and cursors outside the graph's layout bounds.
+        // Without this guard, scrolling above an overlapping widget zooms the
+        // graph anyway, and the event is consumed past where it should be.
+        if let Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) = event
+            && let Some(cursor_pos) = screen_cursor.position_over(layout.bounds())
+        {
+            let cursor_pos: ScreenPoint = cursor_pos.into_euclid();
 
-                let scroll_amount = match delta {
-                    mouse::ScrollDelta::Pixels { y, .. } => *y,
-                    mouse::ScrollDelta::Lines { y, .. } => *y * 10.0,
-                };
+            let scroll_amount = match delta {
+                mouse::ScrollDelta::Pixels { y, .. } => *y,
+                mouse::ScrollDelta::Lines { y, .. } => *y * 10.0,
+            };
 
-                // Different zoom speeds for WASM vs native
-                #[cfg(target_arch = "wasm32")]
-                let zoom_delta = scroll_amount * 0.001 * state.camera.zoom();
-                #[cfg(not(target_arch = "wasm32"))]
-                let zoom_delta = scroll_amount * 0.01 * state.camera.zoom();
+            // Different zoom speeds for WASM vs native
+            #[cfg(target_arch = "wasm32")]
+            let zoom_delta = scroll_amount * 0.001 * state.camera.zoom();
+            #[cfg(not(target_arch = "wasm32"))]
+            let zoom_delta = scroll_amount * 0.01 * state.camera.zoom();
 
-                state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
+            state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
 
-                // Emit camera change event
-                if let Some(handler) = self.on_camera_change_handler() {
-                    let pos = state.camera.position();
-                    shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
-                }
+            // Emit camera change event
+            if let Some(handler) = self.on_camera_change_handler() {
+                let pos = state.camera.position();
+                shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
             }
+
             shell.capture_event();
             shell.request_redraw();
         }
@@ -1430,10 +1441,15 @@ where
             None
         }
         .unwrap_or(Vector::ZERO);
+        // Matches draw(): children see the viewport clipped to graph bounds.
+        let clipped_viewport = layout
+            .bounds()
+            .intersection(viewport)
+            .unwrap_or(Rectangle::new(layout.bounds().position(), Size::ZERO));
         state
             .camera
             .move_by(graph_move_offset.into_euclid())
-            .update_with(viewport, screen_cursor, |viewport, world_cursor| {
+            .update_with(&clipped_viewport, screen_cursor, |viewport, world_cursor| {
                 let state = tree.state.downcast_mut::<NodeGraphState>();
 
                 if state.dragging != Dragging::None
@@ -1995,31 +2011,6 @@ where
                 }
 
                 match event {
-                    Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) => {
-                        if let Some(cursor_pos) = screen_cursor.position() {
-                            let cursor_pos: ScreenPoint = cursor_pos.into_euclid();
-
-                            let scroll_amount = match delta {
-                                mouse::ScrollDelta::Pixels { y, .. } => *y,
-                                mouse::ScrollDelta::Lines { y, .. } => *y * 10.0,
-                            };
-
-                            let zoom_delta = scroll_amount / 100.0;
-
-                            state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
-
-                            // Emit camera change event
-                            if let Some(handler) = self.on_camera_change_handler() {
-                                let pos = state.camera.position();
-                                shell.publish(handler(
-                                    Point::new(pos.x, pos.y),
-                                    state.camera.zoom(),
-                                ));
-                            }
-                        }
-                        shell.capture_event();
-                        shell.request_redraw();
-                    }
                     Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                         // Track left mouse button state for Fruit Ninja edge cutting
                         state.left_mouse_down = true;
