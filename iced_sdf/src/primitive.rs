@@ -136,14 +136,15 @@ pub struct SdfPipeline {
 
 fn create_tile_buffers(device: &Device, cap: u32) -> (iced::wgpu::Buffer, iced::wgpu::Buffer) {
     let cap = cap.max(1) as u64;
+    let usage = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
     (
         device.create_buffer(&BufferDescriptor {
             label: Some("sdf_tile_counts"), size: cap * 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST, mapped_at_creation: false,
+            usage, mapped_at_creation: false,
         }),
         device.create_buffer(&BufferDescriptor {
             label: Some("sdf_tile_slots"), size: cap * SLOT_STRIDE as u64 * 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST, mapped_at_creation: false,
+            usage, mapped_at_creation: false,
         }),
     )
 }
@@ -309,10 +310,29 @@ impl Primitive for SdfPrimitive {
         let tile_base = pipeline.total_tiles;
         pipeline.total_tiles += grid_cols * grid_rows;
 
-        // Grow spatial index buffers if needed
+        // Grow spatial index buffers if needed. Earlier primitives in this
+        // frame have already written their tile data to the current buffers
+        // and submitted compute dispatches against them; subsequent renders
+        // read tile data from the *current* buffer state. We must therefore
+        // copy the populated range into the new buffer before swapping —
+        // otherwise prior primitives render as empty tiles.
         if pipeline.total_tiles > pipeline.tile_capacity {
             let new_cap = (pipeline.total_tiles as f32 * 1.5) as u32;
             let (tc, te) = create_tile_buffers(device, new_cap);
+            let preserved_tiles = tile_base as u64;
+            if preserved_tiles > 0 {
+                let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+                    label: Some("sdf_tile_grow_copy"),
+                });
+                encoder.copy_buffer_to_buffer(
+                    &pipeline.tile_counts_buffer, 0, &tc, 0, preserved_tiles * 4,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &pipeline.tile_entries_buffer, 0, &te, 0,
+                    preserved_tiles * SLOT_STRIDE as u64 * 4,
+                );
+                queue.submit(std::iter::once(encoder.finish()));
+            }
             pipeline.tile_counts_buffer = tc;
             pipeline.tile_entries_buffer = te;
             pipeline.tile_capacity = new_cap;
