@@ -37,7 +37,7 @@ use demo_common::{ScreenshotHelper, ScreenshotMessage};
 use iced::{
     alignment::Horizontal,
     Color, Element, Length, Point, Subscription, Theme, Vector,
-    widget::{button, column, container, row, scrollable, text, Space},
+    widget::{button, column, container, opaque, row, scrollable, stack, text, Space},
 };
 use iced_nodegraph::{
     NodeContentStyle, PinRef, node_graph, pin, simple_node,
@@ -464,7 +464,7 @@ impl App {
             ng.push_edge(*from, *to);
         }
 
-        // Toolbar
+        // Toolbar (opaque overlay anchored to the top of the graph)
         let toolbar = container(
             row![
                 button("Clear All").on_press(Message::ClearAll),
@@ -479,7 +479,11 @@ impl App {
             .padding(4),
         )
         .padding(4)
-        .width(Length::Fill);
+        .width(Length::Fill)
+        .style(|theme: &Theme| container::Style {
+            background: Some(theme.extended_palette().background.weak.color.into()),
+            ..Default::default()
+        });
 
         // Status bar with scrollable feedback log
         let feedback_content: Element<Message> = if self.show_rules {
@@ -499,11 +503,30 @@ impl App {
 
         let status_bar = container(feedback_content)
             .width(Length::Fill)
-            .height(Length::Fixed(if self.show_rules { 180.0 } else { 100.0 }));
+            .height(Length::Fixed(if self.show_rules { 180.0 } else { 100.0 }))
+            .style(|theme: &Theme| container::Style {
+                background: Some(theme.extended_palette().background.weak.color.into()),
+                ..Default::default()
+            });
 
-        column![toolbar, Element::from(ng), status_bar]
-            .height(Length::Fill)
-            .into()
+        // The node graph fills the whole area as the stack base; the toolbar and
+        // status bar float over it as opaque overlays. The widget renders and
+        // hit-tests in window coordinates, so it must sit at the window origin
+        // (a top toolbar in a column would offset the SDF layers from the
+        // content). `opaque` keeps wheel/click events on each strip from
+        // reaching the graph underneath.
+        stack![
+            Element::from(ng),
+            container(opaque(toolbar))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_y(iced::alignment::Vertical::Top),
+            container(opaque(status_bar))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_y(iced::alignment::Vertical::Bottom),
+        ]
+        .into()
     }
 
     fn rules_panel(&self) -> Element<'_, Message> {
