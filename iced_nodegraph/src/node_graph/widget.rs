@@ -237,19 +237,7 @@ fn compute_pin_hash<P: PinId>(pin_id: &P) -> u64 {
 
 /// Resolves a NodeConfig to a complete NodeStyle using theme defaults.
 fn resolve_node_style(config: &NodeConfig, theme: &Theme) -> NodeStyle {
-    let base = NodeStyle::from_theme(theme);
-
-    NodeStyle {
-        fill_color: config.fill_color.unwrap_or(base.fill_color),
-        corner_radius: config.corner_radius.unwrap_or(base.corner_radius),
-        opacity: config.opacity.unwrap_or(base.opacity),
-        border: config.border.or(base.border),
-        shadow: if let Some(ref sc) = config.shadow {
-            sc.resolve()
-        } else {
-            base.shadow
-        },
-    }
+    config.resolve(&NodeStyle::from_theme(theme))
 }
 
 /// Resolves an EdgeConfig to a complete EdgeStyle using theme defaults.

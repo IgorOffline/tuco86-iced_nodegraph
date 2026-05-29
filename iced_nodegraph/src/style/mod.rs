@@ -17,11 +17,13 @@ use iced::{Color, Theme};
 use iced_sdf::Pattern;
 use std::borrow::Cow;
 
+#[macro_use]
+mod macros;
 mod config;
 mod sdf;
 
-// Re-export config types
-pub use config::{EdgeConfig, GraphConfig, NodeConfig, PinConfig, SelectionConfig, ShadowConfig};
+// Re-export config types (NodeConfig is generated next to NodeStyle below).
+pub use config::{EdgeConfig, GraphConfig, PinConfig, SelectionConfig, ShadowConfig};
 
 // SDF layer decomposition (crate-internal, used by the widget renderer).
 pub(crate) use sdf::{EdgeGeometry, color_with_opacity};
@@ -376,19 +378,26 @@ impl NodeBorder {
 // Node Style
 // ============================================================================
 
-/// Style configuration for a node's visual appearance.
-#[derive(Debug, Clone, PartialEq)]
-pub struct NodeStyle {
-    /// Fill color for the node body
-    pub fill_color: Color,
-    /// Corner radius for rounded corners
-    pub corner_radius: f32,
-    /// Node opacity (0.0 to 1.0)
-    pub opacity: f32,
-    /// Optional border
-    pub border: Option<NodeBorder>,
-    /// Optional drop shadow
-    pub shadow: Option<NodeShadow>,
+style_config! {
+    /// Style configuration for a node's visual appearance.
+    struct NodeStyle;
+    /// Partial node configuration for cascading style overrides.
+    ///
+    /// Fields set to `Some` override theme defaults; `None` fields inherit via
+    /// [`NodeConfig::resolve`]. Combine with [`NodeConfig::merge`].
+    struct NodeConfig;
+    fields {
+        /// Fill color for the node body.
+        value fill_color: Color,
+        /// Corner radius for rounded corners.
+        value corner_radius: f32,
+        /// Node opacity (0.0 to 1.0).
+        value opacity: f32,
+        /// Optional border (replaces any existing border).
+        option border: NodeBorder,
+        /// Optional drop shadow.
+        nested shadow: NodeShadow => ShadowConfig,
+    }
 }
 
 impl Default for NodeStyle {
