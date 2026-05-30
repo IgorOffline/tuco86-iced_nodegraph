@@ -147,7 +147,7 @@ impl EdgeStyle<Resolved> {
         let mut layers = Vec::with_capacity(6);
 
         // Stroke (front).
-        let stroke_q = quad_resolve_pins(&self.color, start_color, end_color);
+        let stroke_q = quad_resolve_pins(&self.stroke_color, start_color, end_color);
         layers.push(EdgeLayer {
             geometry: EdgeGeometry::Stroke,
             style: quad_stroke(&stroke_q, self.pattern, 1.0),

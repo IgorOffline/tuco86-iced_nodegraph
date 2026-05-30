@@ -501,7 +501,7 @@ where
                 let mut edge_style = resolve_edge_style(edge_style_fn.as_ref(), theme);
                 if pending_cuts.is_some_and(|cuts| cuts.contains(&edge_idx)) {
                     // Pending-cut feedback: tint the stroke red.
-                    edge_style.color = ColorQuad::solid(Color::from_rgb(1.0, 0.2, 0.2));
+                    edge_style.stroke_color = ColorQuad::solid(Color::from_rgb(1.0, 0.2, 0.2));
                 }
 
                 // The edge is drawn exactly as stored (from -> to); gradient,

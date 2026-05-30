@@ -23,9 +23,9 @@ use super::mode::{Partial, Resolved, StyleMode};
 /// Visual style for an edge.
 #[style]
 pub struct EdgeStyle {
-    // Stroke (color: arc gradient start -> end; TRANSPARENT end = inherit pin)
+    // Stroke (stroke_color: arc gradient start -> end; TRANSPARENT end = inherit pin)
     /// Stroke color as an arc-length gradient (start pin -> end pin).
-    pub color: ColorQuad,
+    pub stroke_color: ColorQuad,
     /// Stroke pattern (thickness, dash/gap, flow).
     pub pattern: Pattern,
     /// Outline ring width on the stroke. 0 = no outline.
@@ -67,7 +67,7 @@ impl EdgeStyle<Resolved> {
     fn stroke(color: ColorQuad, pattern: Pattern) -> Self {
         let none = ColorQuad::solid(Color::TRANSPARENT);
         Self {
-            color,
+            stroke_color: color,
             pattern,
             stroke_outline_width: 0.0,
             stroke_outline_color: none,
