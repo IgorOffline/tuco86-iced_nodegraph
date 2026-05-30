@@ -39,7 +39,7 @@ use iced::{
     widget::{button, column, container, opaque, pick_list, row, slider, stack, text},
     window,
 };
-use iced_nodegraph::{NodeBorder, NodeStyle, Pattern, PinRef, node_graph};
+use iced_nodegraph::{NodeStyle, Pattern, PinRef, Resolved, node_graph};
 use nodes::styled_node;
 use std::collections::HashSet;
 
@@ -139,7 +139,7 @@ impl NodePreset {
 
 struct Application {
     edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
-    nodes: Vec<(Point, String, NodeStyle)>,
+    nodes: Vec<(Point, String, NodeStyle<Resolved>)>,
     current_theme: Theme,
     selected_node: Option<usize>,
     graph_selection: HashSet<usize>,
@@ -247,11 +247,7 @@ impl Application {
                 if let Some((_, _, style)) = self.nodes.get(index) {
                     self.corner_radius = style.corner_radius;
                     self.opacity = style.opacity;
-                    self.border_width = style
-                        .border
-                        .as_ref()
-                        .map(|b| b.pattern.thickness)
-                        .unwrap_or(1.0);
+                    self.border_width = style.border_pattern.thickness;
                 }
             }
             Message::ApplyPreset(preset) => {
@@ -266,11 +262,7 @@ impl Application {
                         *style = new_style.clone();
                         self.corner_radius = new_style.corner_radius;
                         self.opacity = new_style.opacity;
-                        self.border_width = new_style
-                            .border
-                            .as_ref()
-                            .map(|b| b.pattern.thickness)
-                            .unwrap_or(1.0);
+                        self.border_width = new_style.border_pattern.thickness;
                     }
                 }
             }
@@ -290,12 +282,7 @@ impl Application {
         {
             style.corner_radius = self.corner_radius;
             style.opacity = self.opacity;
-            // Update border width in the border field
-            if let Some(ref mut border) = style.border {
-                border.pattern = Pattern::solid(self.border_width);
-            } else {
-                style.border = Some(NodeBorder::new().pattern(Pattern::solid(self.border_width)));
-            }
+            style.border_pattern = Pattern::solid(self.border_width);
         }
     }
 
@@ -482,12 +469,14 @@ impl Application {
             .selection(&self.graph_selection);
 
         for (index, (position, name, style)) in self.nodes.iter().enumerate() {
-            // Convert NodeStyle to NodeConfig for API
+            // The demo stores a fully resolved style per node; the callback just
+            // returns it (ignoring the theme base).
+            let node_style = style.clone();
             ng.push_node_styled(
                 index,
                 *position,
                 styled_node(name, style, theme),
-                style.clone().into(),
+                move |_theme, _base| node_style.clone(),
             );
         }
 
