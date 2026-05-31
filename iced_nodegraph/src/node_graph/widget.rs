@@ -32,13 +32,13 @@ use crate::{
     PinDirection, PinRef, PinSide,
     ids::{EdgeId, NodeId, PinId},
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
-    node_pin::NodePinState,
+    node_pin::{NodePinState, PinInfo},
     style::{
-        ColorQuad, EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStyle,
-        Resolved,
+        EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus,
+        PinStyle, Resolved,
     },
 };
-use super::{EdgeStyleFn, NodeStyleFn};
+use super::{EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use iced_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style};
 
 use iced::Color;
@@ -263,10 +263,28 @@ fn resolve_graph_style(style: Option<&GraphStyle>, theme: &Theme) -> GraphStyle 
 
 /// Resolves a pin's drawn style: theme base merged with the per-pin overlay,
 /// then the indicator fill color forced to the pin's `color`.
-fn resolve_pin_style(state: &NodePinState, theme: &Theme) -> PinStyle<Resolved> {
-    let mut style = state.style.merge_theme(theme);
-    style.color = ColorQuad::solid(state.color);
-    style
+fn resolve_pin_style<P: PinId + 'static>(
+    pin_style_fn: Option<&PinStyleFn<'_, P, Theme>>,
+    state: &NodePinState,
+    theme: &Theme,
+    status: PinStatus,
+) -> PinStyle<Resolved> {
+    if let (Some(f), Some(pin_id)) = (pin_style_fn, state.pin_id.downcast_ref::<P>()) {
+        f(theme, PinInfo::new(state.direction, state.data_type, pin_id), status)
+    } else {
+        crate::style::resolved_pin_style(theme, status)
+    }
+}
+
+/// The pin's resolved indicator color, for inheriting edge stroke ends.
+fn pin_color<P: PinId + 'static>(
+    pin_style_fn: Option<&PinStyleFn<'_, P, Theme>>,
+    state: &NodePinState,
+    theme: &Theme,
+) -> Color {
+    resolve_pin_style(pin_style_fn, state, theme, PinStatus::Idle)
+        .color
+        .near_start
 }
 
 /// Pin indicator radius, pulsing when it is a valid drop target.
@@ -494,29 +512,21 @@ where
                 let from_side: u32 = from_pin_state.side.into();
                 let to_side: u32 = to_pin_state.side.into();
 
+                // Pin colors come from each pin's owner-node pin_style closure
+                // (pins carry no style); TRANSPARENT stroke ends inherit them.
+                let from_color =
+                    pin_color(self.nodes[from_node_idx].3.as_ref(), from_pin_state, theme);
+                let to_color = pin_color(self.nodes[to_node_idx].3.as_ref(), to_pin_state, theme);
+
                 // Normalize orientation so the OUTPUT pin is the edge start
                 // (output -> input). Gradient, arrow and flow then follow the
                 // data-flow direction regardless of which side was dragged from.
                 let swap = !matches!(from_pin_state.direction, PinDirection::Output)
                     && matches!(to_pin_state.direction, PinDirection::Output);
                 let (start_pos, end_pos, start_side, end_side, start_color, end_color) = if swap {
-                    (
-                        to_pos,
-                        from_pos,
-                        to_side,
-                        from_side,
-                        to_pin_state.color,
-                        from_pin_state.color,
-                    )
+                    (to_pos, from_pos, to_side, from_side, to_color, from_color)
                 } else {
-                    (
-                        from_pos,
-                        to_pos,
-                        from_side,
-                        to_side,
-                        from_pin_state.color,
-                        to_pin_state.color,
-                    )
+                    (from_pos, to_pos, from_side, to_side, from_color, to_color)
                 };
 
                 let edge_status = if pending_cuts.is_some_and(|cuts| cuts.contains(&edge_idx)) {
@@ -586,7 +596,10 @@ where
                     // when the graph is off the window origin.
                     let end_pos: WorldPoint = cursor_layout(cursor_pos);
 
-                    let drag_edge_style = resolve_edge_style(None, theme, EdgeStatus::Idle);
+                    let drag_edge_style = match self.dragging_edge_style_fn.as_ref() {
+                        Some(f) => f(theme),
+                        None => crate::style::resolved_edge_style(theme, EdgeStatus::Idle),
+                    };
 
                     let from_side: u32 = from_pin_state.side.into();
                     let cursor_side: u32 = match from_pin_state.side {
@@ -596,8 +609,22 @@ where
                         PinSide::Bottom => 2,
                         PinSide::Row => 1,
                     };
+
+                    let from_color =
+                        pin_color(self.nodes[*from_node_idx].3.as_ref(), from_pin_state, theme);
+
+                    // Output = start, input = end. Dragging FROM an input pin puts
+                    // the held pin at the END and the cursor at the START (flip);
+                    // from an output it stays start -> cursor end.
+                    let (start_pos, end_pos, start_side, end_side) =
+                        if matches!(from_pin_state.direction, PinDirection::Input) {
+                            (end_pos, start_pos, cursor_side, from_side)
+                        } else {
+                            (start_pos, end_pos, from_side, cursor_side)
+                        };
+
                     let (shape, shadow_shape) =
-                        edge_shapes(&start_pos, &end_pos, from_side, cursor_side, &drag_edge_style);
+                        edge_shapes(&start_pos, &end_pos, start_side, end_side, &drag_edge_style);
 
                     let mut drag_batch = SdfPrimitive::new();
                     push_edge_layers(
@@ -605,8 +632,8 @@ where
                         &shape,
                         &shadow_shape,
                         &drag_edge_style,
-                        from_pin_state.color,
-                        from_pin_state.color,
+                        from_color,
+                        from_color,
                     );
 
                     let (cx, cy) = layer_camera(
@@ -633,7 +660,7 @@ where
             let cam_zoom = render_context.camera_zoom;
 
             for &node_index in &z_indices {
-                let (_position, _element, node_style) = &self.nodes[node_index];
+                let (_position, _element, node_style, _) = &self.nodes[node_index];
                 let Some(node_layout) = layout.children().nth(node_index) else {
                     continue;
                 };
@@ -692,7 +719,7 @@ where
         // For each node: Fill → Widgets → Foreground (border + pins batched)
         // ========================================
         for &node_index in &z_indices {
-            let (_position, element, node_style) = &self.nodes[node_index];
+            let (_position, element, node_style, node_pin_style) = &self.nodes[node_index];
             let Some(node_tree) = tree.children.get(node_index) else {
                 continue;
             };
@@ -726,7 +753,13 @@ where
             for (pin_idx, (_pin_index, pin_state, (pos_a, pos_b))) in pins.iter().enumerate() {
                 let is_valid_target =
                     is_edge_dragging && state.valid_drop_targets.contains(&(node_index, pin_idx));
-                let pin_style = resolve_pin_style(pin_state, theme);
+                let pin_status = if is_valid_target {
+                    PinStatus::ValidTarget
+                } else {
+                    PinStatus::Idle
+                };
+                let pin_style =
+                    resolve_pin_style(node_pin_style.as_ref(), pin_state, theme, pin_status);
                 let indicator_r =
                     pin_indicator_radius(pin_style.radius, is_valid_target, time) * 0.4;
                 let cutout_r = indicator_r + pin_style.border_width;
@@ -870,7 +903,13 @@ where
                 for (pin_idx, (_pin_index, pin_state, (pin_pos, _))) in pins.iter().enumerate() {
                     let is_valid_target = is_edge_dragging
                         && state.valid_drop_targets.contains(&(node_index, pin_idx));
-                    let pin_style = resolve_pin_style(pin_state, theme);
+                    let pin_status = if is_valid_target {
+                        PinStatus::ValidTarget
+                    } else {
+                        PinStatus::Idle
+                    };
+                    let pin_style =
+                        resolve_pin_style(node_pin_style.as_ref(), pin_state, theme, pin_status);
                     let radius = pin_indicator_radius(pin_style.radius, is_valid_target, time);
                     let indicator_r = radius * 0.4;
                     let pin_world: WorldPoint =
@@ -1803,7 +1842,7 @@ where
                     // children itself takes the event.
                     let pre_captured = shell.is_event_captured();
                     for &node_index in z_indices.iter().rev() {
-                        let Some((_pos, element, _style)) = self.nodes.get_mut(node_index) else {
+                        let Some((_pos, element, _style, _)) = self.nodes.get_mut(node_index) else {
                             continue;
                         };
                         let Some(child_tree) = tree.children.get_mut(node_index) else {

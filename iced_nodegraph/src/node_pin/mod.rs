@@ -33,8 +33,7 @@
 //! - Visual feedback via pulsing animation on valid targets
 
 use crate::ids::PinId;
-use crate::style::{Partial, PinStyle};
-use iced::{Color, Element, Event, Length, Point, Rectangle, Size};
+use iced::{Element, Event, Length, Point, Rectangle, Size};
 use iced_widget::core::{
     Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
     widget::{Tree, tree},
@@ -124,6 +123,40 @@ pub enum PinDirection {
     Both,
 }
 
+/// Read-only view of a pin's semantic info, passed to a node's `pin_style`
+/// closure so it can style each pin by direction, data type, or id. The pin
+/// itself carries no style; the owning node decides how its pins look.
+pub struct PinInfo<'a, P> {
+    direction: PinDirection,
+    data_type: TypeId,
+    pin_id: &'a P,
+}
+
+impl<'a, P> PinInfo<'a, P> {
+    pub(crate) fn new(direction: PinDirection, data_type: TypeId, pin_id: &'a P) -> Self {
+        Self {
+            direction,
+            data_type,
+            pin_id,
+        }
+    }
+
+    /// The pin's direction (input / output / both).
+    pub fn direction(&self) -> PinDirection {
+        self.direction
+    }
+
+    /// The pin's data-type id (for type-based styling / connection matching).
+    pub fn data_type(&self) -> TypeId {
+        self.data_type
+    }
+
+    /// The pin's user id.
+    pub fn pin_id(&self) -> &P {
+        self.pin_id
+    }
+}
+
 /// A transparent wrapper used as a marker within `NodeGraph`.
 ///
 /// Generic over `P` which is the pin identifier type (e.g., `String`, enum, UUID).
@@ -136,10 +169,6 @@ where
     pub direction: PinDirection,
     pub pin_id: P,
     pub data_type: TypeId,
-    pub color: Color,
-    /// Per-pin style overlay (shape, radius, border). Resolved against the theme
-    /// at draw time; the indicator fill color comes from `color`.
-    pub style: PinStyle<Partial>,
     pub content: Element<'a, Message, Theme, Renderer>,
     interactions_disabled: bool,
 }
@@ -159,8 +188,6 @@ where
             direction: PinDirection::Both,
             pin_id,
             data_type: TypeId::of::<()>(), // Default: untyped
-            color: Color::from_rgb(0.5, 0.5, 0.5),
-            style: PinStyle::new(),
             content: content.into(),
             interactions_disabled: false,
         }
@@ -181,19 +208,6 @@ where
     /// ```
     pub fn data_type<T: 'static>(mut self) -> Self {
         self.data_type = TypeId::of::<T>();
-        self
-    }
-
-    pub fn color(mut self, color: Color) -> Self {
-        self.color = color;
-        self
-    }
-
-    /// Sets the per-pin style overlay (shape, radius, border). Only fields set
-    /// in the overlay override the theme defaults; the indicator fill color is
-    /// taken from [`Self::color`].
-    pub fn styled(mut self, style: impl Into<PinStyle<Partial>>) -> Self {
-        self.style = style.into();
         self
     }
 
@@ -246,9 +260,6 @@ pub(super) struct NodePinState {
     pub direction: PinDirection,
     /// TypeId of the data this pin carries - used for connection matching
     pub data_type: TypeId,
-    pub color: Color,
-    /// Per-pin style overlay (shape, radius, border).
-    pub style: PinStyle<Partial>,
     pub position: Point,
     /// When true, pin cannot be dragged from or dropped onto
     pub interactions_disabled: bool,
@@ -274,8 +285,6 @@ where
             side: self.side,
             direction: self.direction,
             data_type: self.data_type,
-            color: self.color,
-            style: self.style.clone(),
             position: Point::new(0.0, 0.0),
             interactions_disabled: self.interactions_disabled,
         })
@@ -325,8 +334,6 @@ where
             state.side = self.side;
             state.direction = self.direction;
             state.data_type = self.data_type;
-            state.color = self.color;
-            state.style = self.style.clone();
             state.position = layout.bounds().center();
             state.interactions_disabled = self.interactions_disabled;
         }
@@ -435,15 +442,18 @@ where
 ///
 /// # Examples
 ///
+/// Pins carry no style of their own; the owning node colors and shapes them via
+/// [`Node::pin_style`](crate::Node::pin_style), keyed on the pin's direction,
+/// data type or id.
+///
 /// ```rust,ignore
 /// use iced_nodegraph::pin;
-/// use iced::Color;
 /// use iced::widget::text;
 ///
-/// // Full syntax: side, pin_id, content, direction, data_type, color
-/// pin!(Right, "output", text("output"), Output, Email, Color::from_rgb(0.3, 0.7, 0.9))
+/// // Full syntax: side, pin_id, content, direction, data_type
+/// pin!(Right, "output", text("output"), Output, Email)
 ///
-/// // With type only (uses default gray color)
+/// // With type only
 /// pin!(Left, "input", text("input"), Input, f32)
 ///
 /// // With direction only (untyped, connects to anything)
@@ -454,14 +464,6 @@ where
 /// ```
 #[macro_export]
 macro_rules! pin {
-    // Full: side, pin_id, content, direction, type, color
-    ($side:ident, $pin_id:expr, $content:expr, $dir:ident, $data_type:ty, $color:expr) => {
-        $crate::node_pin($crate::PinSide::$side, $pin_id, $content)
-            .direction($crate::PinDirection::$dir)
-            .data_type::<$data_type>()
-            .color($color)
-    };
-
     // With type: side, pin_id, content, direction, type
     ($side:ident, $pin_id:expr, $content:expr, $dir:ident, $data_type:ty) => {
         $crate::node_pin($crate::PinSide::$side, $pin_id, $content)

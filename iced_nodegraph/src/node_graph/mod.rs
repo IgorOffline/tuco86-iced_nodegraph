@@ -33,11 +33,10 @@
 //!
 //! ## Styling
 //!
-//! Visual appearance is controlled through:
-//! - [`graph_style()`](NodeGraph::graph_style) - Overall graph appearance
-//! - [`node_style()`](NodeGraph::node_style) - Per-status node styling
-//! - [`edge_style()`](NodeGraph::edge_style) - Per-status edge styling
-//! - [`pin_style()`](NodeGraph::pin_style) - Per-status pin styling
+//! Visual appearance is controlled per element through status-driven closures:
+//! - [`Node::style`] - per-node body style; [`Node::pin_style`] - the node's pins
+//! - [`Edge::style`] - per-edge style
+//! - [`NodeGraph::graph_style`] / [`NodeGraph::dragging_edge_style`] - graph chrome
 
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -47,8 +46,10 @@ use std::marker::PhantomData;
 use iced::{Color, Length, Point, Size, Vector};
 
 use crate::ids::{EdgeId, IdMaps, NodeId, PinId};
-use crate::node_pin::PinReference;
-use crate::style::{EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, Resolved};
+use crate::node_pin::{PinInfo, PinReference};
+use crate::style::{
+    EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus, PinStyle, Resolved,
+};
 
 /// Per-node style callback: theme + status -> resolved style. Used by [`Node`].
 pub(crate) type NodeStyleFn<'a, Theme> =
@@ -56,33 +57,44 @@ pub(crate) type NodeStyleFn<'a, Theme> =
 /// Per-edge style callback: theme + status -> resolved style. Used by [`Edge`].
 pub(crate) type EdgeStyleFn<'a, Theme> =
     Box<dyn Fn(&Theme, EdgeStatus) -> EdgeStyle<Resolved> + 'a>;
+/// Per-node pin style callback: theme + pin info + status -> resolved pin style.
+/// The node styles all of its pins (pins carry no style of their own). Used by
+/// [`Node::pin_style`].
+pub(crate) type PinStyleFn<'a, P, Theme> =
+    Box<dyn Fn(&Theme, PinInfo<'_, P>, PinStatus) -> PinStyle<Resolved> + 'a>;
+/// Drag-edge style callback: theme -> resolved style. A freshly dragged edge has
+/// no status. Used by [`NodeGraph::dragging_edge_style`].
+pub(crate) type DragEdgeStyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> EdgeStyle<Resolved> + 'a>;
 
-/// A node to push onto the graph: id, position, content element, and an optional
-/// per-node status-driven style closure. Build with [`node`] + [`Node::style`],
-/// then add via [`NodeGraph::push_node`]. Looks like its own widget even though
-/// the body is drawn by the graph.
-pub struct Node<'a, N, Message, Theme, Renderer> {
+/// A node to push onto the graph: id, position, content element, an optional
+/// per-node style closure, and an optional closure styling all of its pins.
+/// Build with [`node`] + [`Node::style`]/[`Node::pin_style`], then add via
+/// [`NodeGraph::push_node`]. Looks like its own widget even though the body and
+/// pins are drawn by the graph.
+pub struct Node<'a, N, P, Message, Theme, Renderer> {
     id: N,
     position: Point,
     element: iced::Element<'a, Message, Theme, Renderer>,
     style_fn: Option<NodeStyleFn<'a, Theme>>,
+    pin_style_fn: Option<PinStyleFn<'a, P, Theme>>,
 }
 
 /// Creates a [`Node`] with default (theme) styling.
-pub fn node<'a, N, Message, Theme, Renderer>(
+pub fn node<'a, N, P, Message, Theme, Renderer>(
     id: N,
     position: Point,
     element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
-) -> Node<'a, N, Message, Theme, Renderer> {
+) -> Node<'a, N, P, Message, Theme, Renderer> {
     Node {
         id,
         position,
         element: element.into(),
         style_fn: None,
+        pin_style_fn: None,
     }
 }
 
-impl<'a, N, Message, Theme, Renderer> Node<'a, N, Message, Theme, Renderer> {
+impl<'a, N, P, Message, Theme, Renderer> Node<'a, N, P, Message, Theme, Renderer> {
     /// Sets the per-node style closure: receives the theme and the node's
     /// [`NodeStatus`], returns the resolved style. Layer over the built-in
     /// default:
@@ -95,6 +107,24 @@ impl<'a, N, Message, Theme, Renderer> Node<'a, N, Message, Theme, Renderer> {
     /// ```
     pub fn style(mut self, f: impl Fn(&Theme, NodeStatus) -> NodeStyle<Resolved> + 'a) -> Self {
         self.style_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the closure that styles all of this node's pins: receives the theme,
+    /// a [`PinInfo`] view (direction, data type, id) and the pin's
+    /// [`PinStatus`], returns the resolved pin style.
+    /// ```ignore
+    /// node(0, pos, el).pin_style(|theme, pin, status| {
+    ///     default_pin_style(theme, status)
+    ///         .color(color_for(pin.data_type()))
+    ///         .resolve(&PinStyle::from_theme(theme))
+    /// })
+    /// ```
+    pub fn pin_style(
+        mut self,
+        f: impl Fn(&Theme, PinInfo<'_, P>, PinStatus) -> PinStyle<Resolved> + 'a,
+    ) -> Self {
+        self.pin_style_fn = Some(Box::new(f));
         self
     }
 }
@@ -330,6 +360,7 @@ pub struct NodeGraph<
         Point,
         iced::Element<'a, Message, Theme, Renderer>,
         Option<NodeStyleFn<'a, Theme>>,
+        Option<PinStyleFn<'a, P, Theme>>,
     )>,
     /// Edges with user-defined pin references and config overrides.
     /// Pin IDs are resolved to local indices at render time.
@@ -371,6 +402,9 @@ pub struct NodeGraph<
     /// Style callback for edge cutting tool overlay.
     /// Returns the line color.
     pub(super) cutting_tool_style_fn: Option<Box<dyn Fn(&Theme) -> iced::Color + 'a>>,
+    /// Style for the edge being dragged (theme -> resolved style). The graph
+    /// injects the source pin's color for inheriting (TRANSPARENT) stroke ends.
+    pub(super) dragging_edge_style_fn: Option<DragEdgeStyleFn<'a, Theme>>,
     /// Initial camera position and zoom to restore on first render.
     /// Applied once when the widget state is created, then controlled by user interaction.
     pub(super) initial_camera: Option<(Point, f32)>,
@@ -414,6 +448,7 @@ where
             on_camera_change: None,
             box_select_style_fn: None,
             cutting_tool_style_fn: None,
+            dragging_edge_style_fn: None,
             initial_camera: None,
             can_connect: None,
             sdf_debug: SdfDebug::default(),
@@ -441,10 +476,14 @@ where
     /// Adds a node with the given ID and default styling.
     ///
     /// The node will use theme defaults from `NodeStyle::from_theme()`.
-    pub fn push_node(&mut self, node: Node<'a, N, Message, Theme, Renderer>) {
+    pub fn push_node(&mut self, node: Node<'a, N, P, Message, Theme, Renderer>) {
         self.id_maps.register_node(node.id);
-        self.nodes
-            .push((node.position, node.element, node.style_fn));
+        self.nodes.push((
+            node.position,
+            node.element,
+            node.style_fn,
+            node.pin_style_fn,
+        ));
     }
 
     /// Adds an edge to the graph.
@@ -494,6 +533,16 @@ where
     /// node_graph()
     ///     .cutting_tool_style(|theme| Color::from_rgb(1.0, 0.3, 0.3))
     /// ```
+    /// Sets the style of the edge being dragged (before it connects). Receives
+    /// the theme; the source pin's color is injected for inheriting stroke ends.
+    pub fn dragging_edge_style(
+        mut self,
+        f: impl Fn(&Theme) -> EdgeStyle<Resolved> + 'a,
+    ) -> Self {
+        self.dragging_edge_style_fn = Some(Box::new(f));
+        self
+    }
+
     pub fn cutting_tool_style(mut self, f: impl Fn(&Theme) -> iced::Color + 'a) -> Self {
         self.cutting_tool_style_fn = Some(Box::new(f));
         self
@@ -672,12 +721,12 @@ where
     /// Returns the position of a node by its user ID.
     pub fn node_position(&self, node_id: &N) -> Option<Point> {
         let idx = self.id_maps.node_index(node_id)?;
-        self.nodes.get(idx).map(|(pos, _, _)| *pos)
+        self.nodes.get(idx).map(|(pos, _, _, _)| *pos)
     }
 
     /// Returns the position of a node by its internal index.
     pub fn node_position_by_index(&self, index: usize) -> Option<Point> {
-        self.nodes.get(index).map(|(pos, _, _)| *pos)
+        self.nodes.get(index).map(|(pos, _, _, _)| *pos)
     }
 
     /// Updates a node's position by its ID.
@@ -685,7 +734,7 @@ where
     /// Returns `true` if the node was found and updated, `false` otherwise.
     pub fn update_node_position(&mut self, node_id: &N, position: Point) -> bool {
         if let Some(idx) = self.id_maps.node_index(node_id)
-            && let Some((pos, _, _)) = self.nodes.get_mut(idx)
+            && let Some((pos, _, _, _)) = self.nodes.get_mut(idx)
         {
             *pos = position;
             return true;
@@ -697,7 +746,7 @@ where
     ///
     /// Returns `true` if the node was found and updated, `false` otherwise.
     pub fn update_node_position_by_index(&mut self, index: usize, position: Point) -> bool {
-        if let Some((pos, _, _)) = self.nodes.get_mut(index) {
+        if let Some((pos, _, _, _)) = self.nodes.get_mut(index) {
             *pos = position;
             true
         } else {
@@ -732,13 +781,13 @@ where
     pub(super) fn elements_iter(
         &self,
     ) -> impl Iterator<Item = (Point, &iced::Element<'a, Message, Theme, Renderer>)> {
-        self.nodes.iter().map(|(p, e, _)| (*p, e))
+        self.nodes.iter().map(|(p, e, _, _)| (*p, e))
     }
 
     pub(super) fn elements_iter_mut(
         &mut self,
     ) -> impl Iterator<Item = (Point, &mut iced::Element<'a, Message, Theme, Renderer>)> {
-        self.nodes.iter_mut().map(|(p, e, _)| (*p, e))
+        self.nodes.iter_mut().map(|(p, e, _, _)| (*p, e))
     }
 
     pub(super) fn on_connect_handler(
