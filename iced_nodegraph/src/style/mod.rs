@@ -309,7 +309,11 @@ impl SelectionStyle {
                 box_select_fill: Color::from_rgba(primary.r, primary.g, primary.b, 0.12),
                 box_select_border: Color::from_rgba(primary.r, primary.g, primary.b, 0.5),
                 edge_cutting_color: Color::from_rgb(0.9, 0.2, 0.2),
-                hover_glow_color: Color::from_rgb(primary.r * 0.8, primary.g * 0.8, primary.b * 0.9),
+                hover_glow_color: Color::from_rgb(
+                    primary.r * 0.8,
+                    primary.g * 0.8,
+                    primary.b * 0.9,
+                ),
                 hover_glow_radius: 5.0,
             }
         }

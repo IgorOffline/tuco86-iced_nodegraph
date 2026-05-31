@@ -208,7 +208,9 @@ mod tests {
     #[test]
     fn merge_prefers_self() {
         let a = NodeStyle::new().fill_color(Color::WHITE);
-        let b = NodeStyle::new().fill_color(Color::BLACK).border_outline_width(2.0);
+        let b = NodeStyle::new()
+            .fill_color(Color::BLACK)
+            .border_outline_width(2.0);
         let m = a.merge(&b);
 
         assert_eq!(m.fill_color, Some(ColorQuad::solid(Color::WHITE))); // self wins

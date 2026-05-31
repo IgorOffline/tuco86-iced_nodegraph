@@ -104,7 +104,11 @@ impl NodeStyle<Resolved> {
         let mut layers = Vec::new();
         let bw = self.border_pattern.thickness;
         if bw > 0.0 {
-            layers.push(quad_stroke(&self.border_color, self.border_pattern, opacity));
+            layers.push(quad_stroke(
+                &self.border_color,
+                self.border_pattern,
+                opacity,
+            ));
             if self.border_outline_width > 0.0 {
                 layers.push(quad_stroke(
                     &self.border_outline_color,
@@ -195,7 +199,8 @@ impl EdgeStyle<Resolved> {
             }
 
             // Border background fill (behind the border ring).
-            if self.border_background.near_start.a > 0.0 || self.border_background.near_end.a > 0.0 {
+            if self.border_background.near_start.a > 0.0 || self.border_background.near_end.a > 0.0
+            {
                 layers.push(EdgeLayer {
                     geometry: EdgeGeometry::Stroke,
                     style: quad_style(&self.border_background, -1e6, border_outer, None, 1.0),

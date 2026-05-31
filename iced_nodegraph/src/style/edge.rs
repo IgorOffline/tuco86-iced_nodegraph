@@ -93,7 +93,10 @@ impl EdgeStyle<Resolved> {
 
     /// Data flow preset (blue, bezier).
     pub fn data_flow() -> Self {
-        Self::stroke(ColorQuad::solid(Color::from_rgb(0.3, 0.6, 1.0)), Pattern::solid(2.5))
+        Self::stroke(
+            ColorQuad::solid(Color::from_rgb(0.3, 0.6, 1.0)),
+            Pattern::solid(2.5),
+        )
     }
 
     /// Error preset (red, marching ants, with border ring).
@@ -176,7 +179,10 @@ mod tests {
         let stroke = &layers[0]; // stroke is the front layer
         let pat = stroke.style.pattern.expect("stroke lost its pattern");
         assert!(
-            matches!(pat.pattern_type, iced_sdf::pattern::PatternType::Dashed { .. }),
+            matches!(
+                pat.pattern_type,
+                iced_sdf::pattern::PatternType::Dashed { .. }
+            ),
             "stroke pattern is not Dashed: {:?}",
             pat.pattern_type
         );

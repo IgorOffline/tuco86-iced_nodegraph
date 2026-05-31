@@ -101,6 +101,9 @@ mod tests {
             Color::from_rgb(0.0, 1.0, 0.0),
         );
         let q: ColorQuad = corners.into();
-        assert_eq!(q, ColorQuad::corners(corners.0, corners.1, corners.2, corners.3));
+        assert_eq!(
+            q,
+            ColorQuad::corners(corners.0, corners.1, corners.2, corners.3)
+        );
     }
 }
