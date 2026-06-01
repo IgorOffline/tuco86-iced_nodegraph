@@ -311,6 +311,48 @@ fn pin_indicator_radius(base_radius: f32, valid_target: bool, time: f32) -> f32 
     }
 }
 
+/// Circular pin cutouts that puncture a node body, translated by `(tx, ty)`.
+///
+/// Shared by the node fill (drag offset only) and the shadow (drag offset plus
+/// shadow offset) so the shadow's holes line up exactly with the body's. The
+/// cutout radius tracks the drawn pin indicator, including the valid-target
+/// pulse. `is_valid_target(pin_idx)` decides which pins pulse.
+fn pin_cutout_circles<P: PinId + 'static>(
+    pins: &[(usize, &NodePinState, (Point, Point))],
+    pin_style_fn: Option<&PinStyleFn<'_, P, Theme>>,
+    theme: &Theme,
+    time: f32,
+    tx: f32,
+    ty: f32,
+    mut is_valid_target: impl FnMut(usize) -> bool,
+) -> Vec<Drawable> {
+    let mut cuts = Vec::new();
+    for (pin_idx, (_pin_index, pin_state, (pos_a, pos_b))) in pins.iter().enumerate() {
+        let valid = is_valid_target(pin_idx);
+        let pin_status = if valid {
+            PinStatus::ValidTarget
+        } else {
+            PinStatus::Idle
+        };
+        let pin_style = resolve_pin_style(pin_style_fn, pin_state, theme, pin_status);
+        let indicator_r = pin_indicator_radius(pin_style.radius, valid, time) * 0.4;
+        let cutout_r = indicator_r + pin_style.border_width;
+        if cutout_r <= 0.01 {
+            continue;
+        }
+        // Row pins project onto two borders, yielding two cutout centers.
+        let positions: &[Point] = if pin_state.side == crate::PinSide::Row {
+            &[*pos_a, *pos_b]
+        } else {
+            std::slice::from_ref(pos_a)
+        };
+        for pos in positions {
+            cuts.push(Curve::circle([pos.x + tx, pos.y + ty], cutout_r));
+        }
+    }
+    cuts
+}
+
 impl<N, P, E, Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
     for NodeGraph<'_, N, P, E, Message, iced::Theme, Renderer>
 where
@@ -693,6 +735,66 @@ where
         });
 
         // ========================================
+        // Per-node geometry, built once and shared by the shadow (Layer 3) and
+        // the fill/border (Layer 4). The silhouette (body minus pin cutouts) is
+        // the expensive boolean, so it is never built twice: the shadow clones
+        // and shifts it by the shadow offset rather than rebuilding it.
+        // ========================================
+        struct NodeGeom {
+            outline: Drawable,
+            resolved: NodeStyle<Resolved>,
+            offset: WorldVector,
+            position: WorldPoint,
+            size: Size,
+        }
+        let node_geoms: Vec<Option<NodeGeom>> = (0..self.nodes.len())
+            .map(|node_index| {
+                let (_position, _element, node_style, node_pin_style) = &self.nodes[node_index];
+                let node_layout = layout.children().nth(node_index)?;
+                let node_tree = tree.children.get(node_index)?;
+                let status = if state.selected_nodes.contains(&node_index) {
+                    NodeStatus::Selected
+                } else {
+                    NodeStatus::Idle
+                };
+                let resolved = resolve_node_style(node_style.as_ref(), theme, status);
+                let offset = compute_node_offset(node_index);
+                let position: WorldPoint =
+                    (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
+                let size = node_layout.bounds().size();
+                let pins = find_pins(node_tree, node_layout);
+                let cut_circles = pin_cutout_circles(
+                    &pins,
+                    node_pin_style.as_ref(),
+                    theme,
+                    time,
+                    offset.x,
+                    offset.y,
+                    |pin_idx| {
+                        is_edge_dragging
+                            && state.valid_drop_targets.contains(&(node_index, pin_idx))
+                    },
+                );
+                let body = Curve::rounded_rect(
+                    [
+                        position.x + size.width * 0.5,
+                        position.y + size.height * 0.5,
+                    ],
+                    [size.width * 0.5, size.height * 0.5],
+                    resolved.corner_radius,
+                );
+                let outline = iced_sdf::boolean::difference_many(&body, &cut_circles);
+                Some(NodeGeom {
+                    outline,
+                    resolved,
+                    offset,
+                    position,
+                    size,
+                })
+            })
+            .collect();
+
+        // ========================================
         // Layer 3: Node shadows (batched)
         // ========================================
         {
@@ -700,38 +802,19 @@ where
             let cam_zoom = render_context.camera_zoom;
 
             for &node_index in &z_indices {
-                let (_position, _element, node_style, _) = &self.nodes[node_index];
-                let Some(node_layout) = layout.children().nth(node_index) else {
+                let Some(geom) = node_geoms[node_index].as_ref() else {
                     continue;
                 };
-                let status = if state.selected_nodes.contains(&node_index) {
-                    NodeStatus::Selected
-                } else {
-                    NodeStatus::Idle
-                };
-                let resolved = resolve_node_style(node_style.as_ref(), theme, status);
-
-                if !resolved.has_shadow() {
+                if !geom.resolved.has_shadow() {
                     continue;
                 }
-
-                let offset = compute_node_offset(node_index);
-                let node_position: WorldPoint =
-                    (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
-                let node_size = node_layout.bounds().size();
-                let node_center = [
-                    node_position.x + node_size.width * 0.5,
-                    node_position.y + node_size.height * 0.5,
-                ];
-                let node_half_size = [node_size.width * 0.5, node_size.height * 0.5];
-                let corner_radius = resolved.corner_radius;
-                let opacity = resolved.opacity;
-
-                let (ox, oy) = resolved.shadow_offset;
-                let sc = [node_center[0] + ox, node_center[1] + oy];
-                let shadow_shape = Curve::rounded_rect(sc, node_half_size, corner_radius);
-                let shadow_style_ = resolved.shadow_sdf_style(opacity);
-                shadow_batch.push(&shadow_shape, &shadow_style_);
+                // Reuse the node silhouette, shifted by the shadow offset, then
+                // build the soft three-band shadow over it.
+                let (ox, oy) = geom.resolved.shadow_offset;
+                let shadow_outline = geom.outline.translated(ox, oy);
+                for band in geom.resolved.shadow_sdf_layers(geom.resolved.opacity) {
+                    shadow_batch.push(&shadow_outline, &band);
+                }
             }
 
             if !shadow_batch.is_empty() {
@@ -759,76 +842,31 @@ where
         // For each node: Fill → Widgets → Foreground (border + pins batched)
         // ========================================
         for &node_index in &z_indices {
-            let (_position, element, node_style, node_pin_style) = &self.nodes[node_index];
+            let (_position, element, _node_style, node_pin_style) = &self.nodes[node_index];
             let Some(node_tree) = tree.children.get(node_index) else {
                 continue;
             };
             let Some(node_layout) = layout.children().nth(node_index) else {
                 continue;
             };
-            let status = if state.selected_nodes.contains(&node_index) {
-                NodeStatus::Selected
-            } else {
-                NodeStatus::Idle
+            let Some(geom) = node_geoms[node_index].as_ref() else {
+                continue;
             };
-            let offset = compute_node_offset(node_index);
-
-            let resolved = resolve_node_style(node_style.as_ref(), theme, status);
+            let resolved = &geom.resolved;
+            let offset = geom.offset;
+            let node_position = geom.position;
+            let node_size = geom.size;
+            // The silhouette (body minus pin cutouts) was built once in the
+            // per-node pre-pass; reuse it here for fill and border.
+            let node_outline = geom.outline.clone();
 
             let border_width = resolved.border_pattern.thickness;
-
-            let node_position: WorldPoint =
-                (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
-            let node_size = node_layout.bounds().size();
-            let corner_radius = resolved.corner_radius;
             let opacity = resolved.opacity;
             let cam_zoom = render_context.camera_zoom;
 
-            // Gather pins once. Each pin punctures the body with a circular
-            // cutout centered on its border point; a single boolean difference
-            // resolves all of them, including overlapping or coincident pins
-            // (e.g. a collapsed section where pins stack on the divider).
+            // Pins drive the foreground (border halo plus indicators); the body
+            // cutouts they imply are already baked into `node_outline`.
             let pins = find_pins(node_tree, node_layout);
-            let mut cut_circles: Vec<Drawable> = Vec::new();
-            for (pin_idx, (_pin_index, pin_state, (pos_a, pos_b))) in pins.iter().enumerate() {
-                let is_valid_target =
-                    is_edge_dragging && state.valid_drop_targets.contains(&(node_index, pin_idx));
-                let pin_status = if is_valid_target {
-                    PinStatus::ValidTarget
-                } else {
-                    PinStatus::Idle
-                };
-                let pin_style =
-                    resolve_pin_style(node_pin_style.as_ref(), pin_state, theme, pin_status);
-                let indicator_r =
-                    pin_indicator_radius(pin_style.radius, is_valid_target, time) * 0.4;
-                let cutout_r = indicator_r + pin_style.border_width;
-                if cutout_r <= 0.01 {
-                    continue;
-                }
-                // pin_positions() already projects onto the relevant border, so
-                // each position is exactly the cutout center. Row pins yield two.
-                let positions: &[Point] = if pin_state.side == crate::PinSide::Row {
-                    &[*pos_a, *pos_b]
-                } else {
-                    std::slice::from_ref(pos_a)
-                };
-                for pos in positions {
-                    let cx = pos.x + offset.x;
-                    let cy = pos.y + offset.y;
-                    cut_circles.push(Curve::circle([cx, cy], cutout_r));
-                }
-            }
-
-            let body = Curve::rounded_rect(
-                [
-                    node_position.x + node_size.width * 0.5,
-                    node_position.y + node_size.height * 0.5,
-                ],
-                [node_size.width * 0.5, node_size.height * 0.5],
-                corner_radius,
-            );
-            let node_outline = iced_sdf::boolean::difference_many(&body, &cut_circles);
 
             // Layer 4a: Node Fill
             let fill_pad = 2.0 / cam_zoom;

@@ -120,22 +120,45 @@ impl NodeStyle<Resolved> {
         layers
     }
 
-    /// Whether the shadow is visible (inner alpha and distance both nonzero).
+    /// Whether the shadow is visible (alpha and distance both nonzero).
     pub(crate) fn has_shadow(&self) -> bool {
-        self.shadow_distance > 0.0
-            && (self.shadow_color.near_start.a > 0.0 || self.shadow_color.near_end.a > 0.0)
+        self.shadow_distance > 0.0 && self.shadow_color.a > 0.0
     }
 
-    /// Shadow style: distance gradient from inner (near) to outer (far) over
-    /// `shadow_distance`. The widget shifts the shape by `shadow_offset`.
-    pub(crate) fn shadow_sdf_style(&self, opacity: f32) -> Style {
-        quad_style(
-            &self.shadow_color,
-            0.0,
-            self.shadow_distance.max(0.001),
-            None,
-            opacity,
-        )
+    /// Shadow as three distance bands over the node's (offset) SDF silhouette.
+    ///
+    /// Distance is negative inside the shape, positive outside. The interior is
+    /// full shadow; a ramp blurs across the edge (alpha 1.0 just inside -> 0.5
+    /// at the boundary -> 0.0 just outside), so the node reads as floating with
+    /// a crisp-yet-soft edge that follows pin cutouts. Only `shadow_color`'s
+    /// alpha sets the strength; the bands modulate it. `shadow_distance` is the
+    /// blur half-width. Bands are coplanar and tile the distance axis without
+    /// overlap, meeting at matching alpha so the composite is continuous.
+    pub(crate) fn shadow_sdf_layers(&self, opacity: f32) -> Vec<Style> {
+        let d = self.shadow_distance.max(0.001);
+        let base = self.shadow_color;
+        let alpha = base.a * opacity;
+        // `shadow_color` scaled to a fraction of the full shadow alpha.
+        let shade = |mul: f32| Color {
+            a: alpha * mul,
+            ..base
+        };
+        // A flat-color band: `near` at `from`, `far` at `to` (see Style axes).
+        let band = |near_mul: f32, far_mul: f32, from: f32, to: f32| Style {
+            near_start: shade(near_mul),
+            near_end: shade(near_mul),
+            far_start: shade(far_mul),
+            far_end: shade(far_mul),
+            dist_from: from,
+            dist_to: to,
+            pattern: None,
+            distance_field: false,
+        };
+        vec![
+            band(0.5, 0.0, 0.0, d),   // outside edge: 0.5 -> 0
+            band(1.0, 0.5, -d, 0.0),  // inside edge: 1.0 -> 0.5
+            band(1.0, 1.0, -1e6, -d), // interior: full shadow
+        ]
     }
 }
 

@@ -42,11 +42,14 @@ pub struct NodeStyle {
     /// Outline ring color.
     pub border_outline_color: ColorQuad,
 
-    // Shadow (distance gradient near -> far via shadow_color; fade the far alpha
-    // to 0 for a soft edge. Near alpha 0 = no shadow.)
-    /// Shadow color as a distance gradient: inner (near) -> outer (far).
-    pub shadow_color: ColorQuad,
-    /// Gradient distance from inner to outer edge in world-space pixels.
+    // Shadow. The widget renders the node's real SDF silhouette (with pin
+    // cutouts), offset by `shadow_offset`, as three distance bands: full shadow
+    // inside, a soft ramp across the edge, fading to nothing outside. Only the
+    // base color is user-facing; the bands derive their alpha from it. Alpha 0
+    // or distance 0 = no shadow.
+    /// Base shadow color. The widget modulates its alpha across the bands.
+    pub shadow_color: Color,
+    /// Blur half-width across the shape edge, in world-space pixels.
     pub shadow_distance: f32,
     /// Shadow offset in world-space pixels (x, y).
     pub shadow_offset: (f32, f32),
@@ -59,46 +62,73 @@ impl NodeStyle<Resolved> {
         let palette = theme.extended_palette();
         let bg = palette.background.base.color;
         let bg_weak = palette.background.weak.color;
+        // Pull the theme's primary accent into the node so it reads as part of
+        // the theme rather than neutral gray. The body keeps a faint tint; the
+        // border carries most of the accent signal. Tune via FILL_TINT/
+        // BORDER_TINT below.
+        let accent = palette.primary.base.color;
+
+        // Linear color blend, t in [0, 1] from a toward b.
+        let mix = |a: Color, b: Color, t: f32| {
+            Color::from_rgb(
+                a.r + (b.r - a.r) * t,
+                a.g + (b.g - a.g) * t,
+                a.b + (b.b - a.b) * t,
+            )
+        };
+
+        /// Accent share mixed into the node body fill.
+        const FILL_TINT: f32 = 0.08;
+        /// Accent share mixed into the node border.
+        const BORDER_TINT: f32 = 0.55;
 
         if palette.is_dark {
-            let node_fill = Color::from_rgba(
+            let neutral_fill = Color::from_rgb(
                 bg.r + (bg_weak.r - bg.r) * 0.3,
                 bg.g + (bg_weak.g - bg.g) * 0.3,
                 bg.b + (bg_weak.b - bg.b) * 0.3,
-                1.0,
             );
-            let node_border =
-                Color::from_rgba(bg_weak.r * 1.2, bg_weak.g * 1.2, bg_weak.b * 1.2, 0.8);
+            let node_fill = mix(neutral_fill, accent, FILL_TINT);
+            let node_border = mix(bg_weak, accent, BORDER_TINT);
             Self {
                 fill_color: ColorQuad::solid(node_fill),
                 corner_radius: 5.0,
                 opacity: 0.75,
-                border_color: ColorQuad::solid(node_border),
+                border_color: ColorQuad::solid(Color::from_rgba(
+                    node_border.r,
+                    node_border.g,
+                    node_border.b,
+                    0.85,
+                )),
                 border_pattern: Pattern::solid(1.0),
                 border_outline_width: 0.0,
                 border_outline_color: ColorQuad::solid(Color::TRANSPARENT),
-                shadow_color: ColorQuad::fade(Color::from_rgba(0.0, 0.0, 0.0, 0.15)),
+                shadow_color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
                 shadow_distance: 4.0,
                 shadow_offset: (2.0, 2.0),
             }
         } else {
-            let node_fill = Color::from_rgba(
+            let neutral_fill = Color::from_rgb(
                 bg.r - (bg.r - bg_weak.r) * 0.15,
                 bg.g - (bg.g - bg_weak.g) * 0.15,
                 bg.b - (bg.b - bg_weak.b) * 0.15,
-                1.0,
             );
-            let node_border =
-                Color::from_rgba(bg_weak.r * 0.9, bg_weak.g * 0.9, bg_weak.b * 0.9, 0.9);
+            let node_fill = mix(neutral_fill, accent, FILL_TINT);
+            let node_border = mix(bg_weak, accent, BORDER_TINT);
             Self {
                 fill_color: ColorQuad::solid(node_fill),
                 corner_radius: 5.0,
                 opacity: 0.85,
-                border_color: ColorQuad::solid(node_border),
+                border_color: ColorQuad::solid(Color::from_rgba(
+                    node_border.r,
+                    node_border.g,
+                    node_border.b,
+                    0.9,
+                )),
                 border_pattern: Pattern::solid(1.0),
                 border_outline_width: 0.0,
                 border_outline_color: ColorQuad::solid(Color::TRANSPARENT),
-                shadow_color: ColorQuad::fade(Color::from_rgba(0.0, 0.0, 0.0, 0.12)),
+                shadow_color: Color::from_rgba(0.0, 0.0, 0.0, 0.22),
                 shadow_distance: 6.0,
                 shadow_offset: (2.0, 2.0),
             }
@@ -181,7 +211,7 @@ impl NodeStyle<Resolved> {
             border_pattern: Pattern::solid(border_width),
             border_outline_width: 0.0,
             border_outline_color: ColorQuad::solid(Color::TRANSPARENT),
-            shadow_color: ColorQuad::fade(shadow),
+            shadow_color: shadow,
             shadow_distance,
             shadow_offset,
         }
