@@ -54,6 +54,7 @@ Basic example:
 
 ```rust
 use iced_nodegraph::prelude::*;
+use iced_nodegraph::{edge, node};
 use iced::{Element, Point};
 
 fn view(&self) -> Element<Message> {
@@ -61,14 +62,20 @@ fn view(&self) -> Element<Message> {
         .on_connect(|from, to| Message::Connected(from, to))
         .on_move(|node_id, position| Message::Moved(node_id, position));
 
-    ng.push_node(0, Point::new(200.0, 150.0), my_node_widget());
-    ng.push_node(1, Point::new(525.0, 175.0), another_node());
+    // Nodes are built with node(id, position, widget) and pushed onto the graph.
+    ng.push_node(node(0, Point::new(200.0, 150.0), my_node_widget()));
+    ng.push_node(node(1, Point::new(525.0, 175.0), another_node()));
 
-    ng.push_edge(PinRef::new(0, 0), PinRef::new(1, 0));
+    // An edge connects two pins, addressed by PinRef::new(node_id, pin_id).
+    ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
 
     ng.into()
 }
 ```
+
+`node(..)` and `edge(..)` return builders, so per-node and per-edge styling can be
+chained before pushing: `node(id, pos, w).style(..).pin_style(..)` and
+`edge(from, to).style(..)`.
 
 See [`demos/hello_world/`](demos/hello_world/) for a complete working example.
 
