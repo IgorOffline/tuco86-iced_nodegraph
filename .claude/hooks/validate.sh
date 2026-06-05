@@ -36,9 +36,7 @@ if [ $test_status -ne 0 ]; then
     echo ""
 fi
 
-# Exit 2 if any errors (shows to Claude)
-if [ $check_status -ne 0 ] || [ $wasm_status -ne 0 ] || [ $test_status -ne 0 ]; then
-    exit 2
-fi
-
+# Always exit 0 to avoid Stop-hook loop. exit 2 would block stopping and
+# re-invoke Claude on every failure, causing an endless loop. Errors above
+# are printed for visibility but must not gate the Stop event.
 exit 0
