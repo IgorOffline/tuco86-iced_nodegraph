@@ -217,25 +217,19 @@ pub use style::{
     EdgeStyle,
     GraphStyle,
     NodeStatus,
-    // Node/edge/pin style types (typestate: Partial overlay / Resolved value)
+    // Node/edge/pin style types (concrete; override via struct-update over defaults)
     NodeStyle,
-    Partial,
     PinShape,
     PinStatus,
     PinStyle,
-    Resolved,
     STANDARD_THEMES,
     SelectionStyle,
-    StyleMode,
-    // Built-in status-driven default styles (Partial) + resolved wrappers
+    // Built-in status-driven default styles
     default_edge_style,
     default_node_style,
     default_pin_style,
     is_dark_theme,
     relative_luminance,
-    resolved_edge_style,
-    resolved_node_style,
-    resolved_pin_style,
     theme_name,
 };
 

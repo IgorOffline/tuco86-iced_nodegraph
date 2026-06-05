@@ -21,7 +21,6 @@ use iced_nodegraph_sdf::{Pattern, Style};
 use crate::node_pin::PinDirection;
 
 use super::color::ColorQuad;
-use super::mode::Resolved;
 use super::{EdgeStyle, NodeStyle, PinStyle};
 
 /// Apply opacity to a color by multiplying its alpha channel.
@@ -92,7 +91,7 @@ pub(crate) struct EdgeLayer {
     pub style: Style,
 }
 
-impl NodeStyle<Resolved> {
+impl NodeStyle {
     /// Solid fill layer for the node body, premultiplied by `opacity`.
     pub(crate) fn fill_sdf_style(&self, opacity: f32) -> Style {
         quad_style(&self.fill_color, -1e6, 0.0, None, opacity)
@@ -176,7 +175,7 @@ impl NodeStyle<Resolved> {
     }
 }
 
-impl EdgeStyle<Resolved> {
+impl EdgeStyle {
     /// Decompose into SDF layers front-to-back: stroke, optional stroke outline,
     /// optional border (ring, outline, background), then shadow deepest.
     ///
@@ -265,7 +264,7 @@ impl EdgeStyle<Resolved> {
     }
 }
 
-impl PinStyle<Resolved> {
+impl PinStyle {
     /// SDF layers for a pin indicator, front-to-back: fill then optional border.
     /// `indicator_r` is the drawn radius (the widget may scale it for pulses).
     pub(crate) fn sdf_layers(&self, direction: PinDirection, indicator_r: f32) -> Vec<Style> {

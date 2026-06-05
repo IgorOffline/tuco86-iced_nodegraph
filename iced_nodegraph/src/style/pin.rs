@@ -1,20 +1,17 @@
 //! `PinStyle`: per-pin visual style.
 //!
-//! Flat, concrete struct expanded by [`#[style]`](style) into the typestate form
-//! (`PinStyle<Partial>` overlay / `PinStyle<Resolved>` renderer form). See
-//! [`super::node`] for the full pattern. Color fields are [`ColorQuad`]s; a plain
-//! `Color` coerces to a solid quad. Border on/off is the `border_width` sentinel
-//! (0 = no border).
+//! A flat, concrete struct the renderer consumes directly. See [`super::node`]
+//! for the override-via-struct-update pattern over [`default_pin_style`](crate::default_pin_style).
+//! Color fields are [`ColorQuad`]s; a plain `Color` coerces to a solid quad.
+//! Border on/off is the `border_width` sentinel (0 = no border).
 //!
 use iced::Color;
-use iced_nodegraph_macros::style;
 
 use super::PinShape;
 use super::color::ColorQuad;
-use super::mode::{Partial, Resolved, StyleMode};
 
 /// Visual style for a pin indicator.
-#[style]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PinStyle {
     // Indicator
     /// Pin indicator color.
@@ -31,7 +28,7 @@ pub struct PinStyle {
     pub border_width: f32,
 }
 
-impl PinStyle<Resolved> {
+impl PinStyle {
     /// Data pin preset (circle, blue).
     pub fn data() -> Self {
         Self {
@@ -80,27 +77,19 @@ impl PinStyle<Resolved> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::Theme;
 
     #[test]
-    fn overlay_merged_over_default_resolves() {
+    fn struct_update_overrides_over_default() {
         use crate::style::{PinStatus, default_pin_style};
-        let overlay = PinStyle::new().radius(10.0).shape(PinShape::Square);
-        let base = default_pin_style(&Theme::Dark, PinStatus::Idle);
-        let resolved = overlay.merge(&base).resolve();
+        let base = default_pin_style(&iced::Theme::Dark, PinStatus::Idle);
+        let style = PinStyle {
+            radius: 10.0,
+            shape: PinShape::Square,
+            ..base.clone()
+        };
 
-        assert_eq!(resolved.radius, 10.0); // overlay wins
-        assert_eq!(resolved.shape, PinShape::Square); // overlay wins
-        assert_eq!(resolved.color, base.color.unwrap()); // inherited from default
-    }
-
-    #[test]
-    fn merge_prefers_self() {
-        let a = PinStyle::new().radius(8.0);
-        let b = PinStyle::new().radius(4.0).border_width(2.0);
-        let m = a.merge(&b);
-
-        assert_eq!(m.radius, Some(8.0)); // self wins
-        assert_eq!(m.border_width, Some(2.0)); // filled from other
+        assert_eq!(style.radius, 10.0); // override wins
+        assert_eq!(style.shape, PinShape::Square); // override wins
+        assert_eq!(style.color, base.color); // inherited from default
     }
 }

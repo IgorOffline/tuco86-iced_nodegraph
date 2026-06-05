@@ -35,8 +35,7 @@ use crate::{
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::{NodePinState, PinEnd, PinInfo},
     style::{
-        EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus,
-        PinStyle, Resolved,
+        EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus, PinStyle,
     },
 };
 use iced_nodegraph_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style};
@@ -182,7 +181,7 @@ fn edge_shapes(
     end: &WorldPoint,
     start_side: u32,
     end_side: u32,
-    style: &EdgeStyle<Resolved>,
+    style: &EdgeStyle,
 ) -> (Drawable, Drawable) {
     let shape = edge_drawable(start, end, start_side, end_side, &style.curve);
     let has_shadow = style.shadow_blur > 0.0
@@ -205,7 +204,7 @@ fn push_edge_layers(
     batch: &mut SdfPrimitive,
     shape: &Drawable,
     shadow_shape: &Drawable,
-    style: &EdgeStyle<Resolved>,
+    style: &EdgeStyle,
     start_color: Color,
     end_color: Color,
 ) {
@@ -235,10 +234,10 @@ fn resolve_node_style(
     style_fn: Option<&NodeStyleFn<'_, Theme>>,
     theme: &Theme,
     status: NodeStatus,
-) -> NodeStyle<Resolved> {
+) -> NodeStyle {
     match style_fn {
         Some(f) => f(theme, status),
-        None => crate::style::resolved_node_style(theme, status),
+        None => crate::style::default_node_style(theme, status),
     }
 }
 
@@ -249,10 +248,10 @@ fn resolve_edge_style<P: PinId + 'static, UI>(
     status: EdgeStatus,
     start: Option<PinInfo<'_, P, UI>>,
     end: Option<PinInfo<'_, P, UI>>,
-) -> EdgeStyle<Resolved> {
+) -> EdgeStyle {
     match (style_fn, start, end) {
         (Some(f), Some(s), Some(e)) => f(theme, status, s, e),
-        _ => crate::style::resolved_edge_style(theme, status),
+        _ => crate::style::default_edge_style(theme, status),
     }
 }
 
@@ -279,12 +278,12 @@ fn resolve_pin_style<P: PinId + 'static, UI>(
     other: Option<&NodePinState<UI>>,
     theme: &Theme,
     status: PinStatus,
-) -> PinStyle<Resolved> {
+) -> PinStyle {
     if let (Some(f), Some(this)) = (pin_style_fn, pin_info::<P, UI>(state)) {
         let other_info = other.and_then(pin_info::<P, UI>);
         f(theme, &this, other_info.as_ref(), status)
     } else {
-        crate::style::resolved_pin_style(theme, status)
+        crate::style::default_pin_style(theme, status)
     }
 }
 
@@ -700,7 +699,7 @@ where
                         pin_info::<P, UI>(from_pin_state),
                     ) {
                         (Some(f), Some(info)) => f(theme, info),
-                        _ => crate::style::resolved_edge_style(theme, EdgeStatus::Idle),
+                        _ => crate::style::default_edge_style(theme, EdgeStatus::Idle),
                     };
 
                     let from_side: u32 = from_pin_state.side.into();
@@ -762,7 +761,7 @@ where
         // ========================================
         struct NodeGeom {
             outline: Drawable,
-            resolved: NodeStyle<Resolved>,
+            resolved: NodeStyle,
             offset: WorldVector,
             position: WorldPoint,
             size: Size,

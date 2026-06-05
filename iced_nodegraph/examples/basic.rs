@@ -122,10 +122,11 @@ fn pin_style(
     pin: &PinInfo<'_, usize, Port>,
     _other: Option<&PinInfo<'_, usize, Port>>,
     status: PinStatus,
-) -> PinStyle<Resolved> {
-    default_pin_style(theme, status)
-        .color(pin.info().color())
-        .resolve()
+) -> PinStyle {
+    PinStyle {
+        color: pin.info().color().into(),
+        ..default_pin_style(theme, status)
+    }
 }
 
 /// Wraps node content in a fixed-width body and attaches the shared pin styling.

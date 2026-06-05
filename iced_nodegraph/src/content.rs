@@ -447,7 +447,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::{NodeStatus, resolved_node_style};
+    use crate::style::{NodeStatus, default_node_style};
 
     /// A single radius rounds both corners of the edge equally.
     #[test]
@@ -493,7 +493,7 @@ mod tests {
     #[test]
     fn default_content_matches_rendered_node() {
         let theme = iced::Theme::Dark;
-        let fill = resolved_node_style(&theme, NodeStatus::Idle).corner_radius;
+        let fill = default_node_style(&theme, NodeStatus::Idle).corner_radius;
         let content = NodeContentStyle::input(&theme).corner_radius;
         assert_eq!(
             content, fill,

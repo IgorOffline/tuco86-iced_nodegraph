@@ -195,10 +195,7 @@ fn ctrl_a_selects_all() {
         (2, Point::new(700.0, 100.0)),
     ]));
     ui.point_at(Point::new(500.0, 400.0));
-    ui.simulate([key_pressed(
-        keyboard::Key::Character("a".into()),
-        cmd(),
-    )]);
+    ui.simulate([key_pressed(keyboard::Key::Character("a".into()), cmd())]);
     assert_eq!(last_selection(&messages(ui)), Some(vec![0, 1, 2]));
 }
 
@@ -261,10 +258,7 @@ fn group_move_emits_group_move_with_delta() {
     ]));
     // Select both, then drag one of them: group move, not single move.
     ui.point_at(Point::new(500.0, 400.0));
-    ui.simulate([key_pressed(
-        keyboard::Key::Character("a".into()),
-        cmd(),
-    )]);
+    ui.simulate([key_pressed(keyboard::Key::Character("a".into()), cmd())]);
     let from = center(Point::new(100.0, 100.0));
     drag(&mut ui, from, from + Vector::new(30.0, -10.0));
 
@@ -310,10 +304,7 @@ fn delete_key_requests_delete_of_selection() {
 fn ctrl_d_requests_clone_of_selection() {
     let mut ui = Simulator::new(graph_with(&[(0, Point::new(100.0, 100.0))]));
     click(&mut ui, center(Point::new(100.0, 100.0)));
-    ui.simulate([key_pressed(
-        keyboard::Key::Character("d".into()),
-        cmd(),
-    )]);
+    ui.simulate([key_pressed(keyboard::Key::Character("d".into()), cmd())]);
 
     let msgs = messages(ui);
     assert!(
@@ -326,10 +317,7 @@ fn ctrl_d_requests_clone_of_selection() {
 fn ctrl_d_without_selection_does_nothing() {
     let mut ui = Simulator::new(graph_with(&[(0, Point::new(100.0, 100.0))]));
     ui.point_at(Point::new(500.0, 400.0));
-    ui.simulate([key_pressed(
-        keyboard::Key::Character("d".into()),
-        cmd(),
-    )]);
+    ui.simulate([key_pressed(keyboard::Key::Character("d".into()), cmd())]);
 
     let msgs = messages(ui);
     assert!(
@@ -820,10 +808,7 @@ fn backspace_in_focused_text_input_does_not_delete_node() {
     // Focus the input, then select the node via Ctrl+A (handled by the graph
     // before children), then Backspace.
     click(&mut ui, Point::new(150.0, 115.0));
-    ui.simulate([key_pressed(
-        keyboard::Key::Character("a".into()),
-        cmd(),
-    )]);
+    ui.simulate([key_pressed(keyboard::Key::Character("a".into()), cmd())]);
     ui.simulate([key_pressed(
         keyboard::Key::Named(keyboard::key::Named::Backspace),
         keyboard::Modifiers::default(),

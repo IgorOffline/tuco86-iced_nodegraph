@@ -1,32 +1,26 @@
 //! Style definitions for NodeGraph visual customization.
 //!
-//! Node, edge, and pin styles are defined as flat, concrete structs in the
-//! [`node`], [`edge`], and [`pin`] submodules and expanded by the `#[style]`
-//! attribute macro into a typestate pair: `*Style<Partial>` (a user overlay with
-//! `Option` per field, `None` = inherit) and `*Style<Resolved>` (the fully
-//! populated form the renderer consumes). See [`mode`] for the markers and
+//! Node, edge, and pin styles are flat, concrete structs in the [`node`],
+//! [`edge`], and [`pin`] submodules: the fully populated form the renderer
+//! consumes. The theme-derived defaults live in [`defaults`]; override
+//! individual fields with struct-update syntax over them. See
 //! [`color::ColorQuad`] for the unified color type.
 //!
 //! [`GraphStyle`] and [`SelectionStyle`] (canvas background, selection overlay,
-//! drag-edge colors) remain plain structs; they are not per-element styles.
+//! drag-edge colors) are also plain structs; they are not per-element styles.
 
 use iced::{Color, Theme};
 
 mod color;
 mod defaults;
 mod edge;
-mod mode;
 mod node;
 mod pin;
 mod sdf;
 
 pub use color::ColorQuad;
-pub use defaults::{
-    default_edge_style, default_node_style, default_pin_style, resolved_edge_style,
-    resolved_node_style, resolved_pin_style,
-};
+pub use defaults::{default_edge_style, default_node_style, default_pin_style};
 pub use edge::EdgeStyle;
-pub use mode::{Partial, Resolved, StyleMode};
 pub use node::NodeStyle;
 pub use pin::PinStyle;
 

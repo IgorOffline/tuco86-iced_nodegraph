@@ -1,9 +1,9 @@
 //! `EdgeStyle`: per-edge visual style.
 //!
-//! Flat, concrete struct expanded by [`#[style]`](style) into the typestate form
-//! (`EdgeStyle<Partial>` overlay / `EdgeStyle<Resolved>` renderer form). See
-//! [`super::node`] for the pattern. The legacy `EdgeBorder`/`EdgeShadow` nested
-//! structs are flattened into grouped fields here.
+//! A flat, concrete struct the renderer consumes directly. See [`super::node`]
+//! for the override-via-struct-update pattern over [`default_edge_style`](crate::default_edge_style).
+//! The legacy `EdgeBorder`/`EdgeShadow` nested structs are flattened into
+//! grouped fields here.
 //!
 //! Color fields are [`ColorQuad`]s. The stroke `color` is an arc-length gradient
 //! start -> end (`Color::TRANSPARENT` at an end = inherit that pin's color at
@@ -13,15 +13,13 @@
 //! alpha 0.
 //!
 use iced::Color;
-use iced_nodegraph_macros::style;
 use iced_nodegraph_sdf::Pattern;
 
 use super::EdgeCurve;
 use super::color::ColorQuad;
-use super::mode::{Partial, Resolved, StyleMode};
 
 /// Visual style for an edge.
-#[style]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EdgeStyle {
     // Stroke (stroke_color: arc gradient start -> end; TRANSPARENT end = inherit pin)
     /// Stroke color as an arc-length gradient (start pin -> end pin).
@@ -62,7 +60,7 @@ pub struct EdgeStyle {
     pub curve: EdgeCurve,
 }
 
-impl EdgeStyle<Resolved> {
+impl EdgeStyle {
     /// Plain stroke baseline: no outline, border, or shadow; bezier path.
     fn stroke(color: ColorQuad, pattern: Pattern) -> Self {
         let none = ColorQuad::solid(Color::TRANSPARENT);
@@ -153,18 +151,20 @@ impl EdgeStyle<Resolved> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::Theme;
 
     #[test]
-    fn overlay_merged_over_default_resolves() {
+    fn struct_update_overrides_over_default() {
         use crate::style::{EdgeStatus, default_edge_style};
-        let overlay = EdgeStyle::new().border_width(2.0).curve(EdgeCurve::Line);
-        let base = default_edge_style(&Theme::Dark, EdgeStatus::Idle);
-        let resolved = overlay.merge(&base).resolve();
+        let base = default_edge_style(&iced::Theme::Dark, EdgeStatus::Idle);
+        let style = EdgeStyle {
+            border_width: 2.0,
+            curve: EdgeCurve::Line,
+            ..base
+        };
 
-        assert_eq!(resolved.border_width, 2.0); // overlay wins
-        assert_eq!(resolved.curve, EdgeCurve::Line); // overlay wins
-        assert_eq!(resolved.pattern, Pattern::solid(2.0)); // inherited from default
+        assert_eq!(style.border_width, 2.0); // override wins
+        assert_eq!(style.curve, EdgeCurve::Line); // override wins
+        assert_eq!(style.pattern, Pattern::solid(2.0)); // inherited from default
     }
 
     #[test]
@@ -182,15 +182,5 @@ mod tests {
             "stroke pattern is not Dashed: {:?}",
             pat.pattern_type
         );
-    }
-
-    #[test]
-    fn merge_prefers_self() {
-        let a = EdgeStyle::new().border_width(3.0);
-        let b = EdgeStyle::new().border_width(1.0).shadow_blur(4.0);
-        let m = a.merge(&b);
-
-        assert_eq!(m.border_width, Some(3.0)); // self wins
-        assert_eq!(m.shadow_blur, Some(4.0)); // filled from other
     }
 }

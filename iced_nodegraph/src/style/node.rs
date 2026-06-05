@@ -1,29 +1,26 @@
 //! `NodeStyle`: per-node visual style.
 //!
-//! Written as a flat, concrete struct and expanded by [`#[style]`](style) into
-//! the typestate form: `NodeStyle<Partial>` (user overlay, `Option` per field,
-//! `None` = inherit) and `NodeStyle<Resolved>` (renderer form, concrete per
-//! field). The macro also generates `Clone`/`Debug`/`PartialEq`, `Default` for
-//! the overlay, builder setters, and `merge`/`resolve`. The theme-derived base
-//! lives in [`default_node_style`](crate::default_node_style); only the named
-//! presets stay hand-written below.
+//! A flat, concrete struct the renderer consumes directly. The theme-derived
+//! base lives in [`default_node_style`](crate::default_node_style); override
+//! individual fields with struct-update syntax over it:
+//!
+//! ```ignore
+//! NodeStyle { fill_color: Color::WHITE.into(), ..default_node_style(theme, status) }
+//! ```
 //!
 //! On/off is encoded by sentinels (border thickness 0, shadow blur/alpha 0), so
-//! every field is a plain value and inheritance is per-field, never
-//! `Option<Option<T>>`.
+//! every field is a plain value.
 //!
 use iced::Color;
-use iced_nodegraph_macros::style;
 use iced_nodegraph_sdf::Pattern;
 
 use super::color::ColorQuad;
-use super::mode::{Partial, Resolved, StyleMode};
 
 /// Visual style for a node.
 ///
 /// Color fields are [`ColorQuad`]s (the four iced_nodegraph_sdf corners); a plain `Color`
-/// coerces to a solid quad, so simple cases stay one-liners.
-#[style]
+/// coerces to a solid quad via `into()`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct NodeStyle {
     // Body
     /// Fill color of the node body.
@@ -56,7 +53,7 @@ pub struct NodeStyle {
     pub shadow_offset: (f32, f32),
 }
 
-impl NodeStyle<Resolved> {
+impl NodeStyle {
     /// Input node preset (blue tint).
     pub fn input() -> Self {
         Self::preset(
@@ -143,31 +140,21 @@ impl NodeStyle<Resolved> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::Theme;
 
     #[test]
-    fn overlay_merged_over_default_resolves() {
+    fn struct_update_overrides_over_default() {
         use crate::style::{NodeStatus, default_node_style};
-        // Color coerces to a solid ColorQuad via the `impl Into` setter.
-        let overlay = NodeStyle::new().fill_color(Color::WHITE).opacity(1.0);
-        let base = default_node_style(&Theme::Dark, NodeStatus::Idle);
-        let resolved = overlay.merge(&base).resolve();
+        let base = default_node_style(&iced::Theme::Dark, NodeStatus::Idle);
+        // Color coerces to a solid ColorQuad via `into()`.
+        let style = NodeStyle {
+            fill_color: Color::WHITE.into(),
+            opacity: 1.0,
+            ..base
+        };
 
-        assert_eq!(resolved.fill_color, ColorQuad::solid(Color::WHITE)); // overlay wins
-        assert_eq!(resolved.opacity, 1.0); // overlay wins
-        assert_eq!(resolved.corner_radius, 5.0); // inherited from theme default
-        assert_eq!(resolved.border_pattern, Pattern::solid(1.0)); // inherited
-    }
-
-    #[test]
-    fn merge_prefers_self() {
-        let a = NodeStyle::new().fill_color(Color::WHITE);
-        let b = NodeStyle::new()
-            .fill_color(Color::BLACK)
-            .border_outline_width(2.0);
-        let m = a.merge(&b);
-
-        assert_eq!(m.fill_color, Some(ColorQuad::solid(Color::WHITE))); // self wins
-        assert_eq!(m.border_outline_width, Some(2.0)); // filled from other
+        assert_eq!(style.fill_color, ColorQuad::solid(Color::WHITE)); // override wins
+        assert_eq!(style.opacity, 1.0); // override wins
+        assert_eq!(style.corner_radius, 5.0); // inherited from theme default
+        assert_eq!(style.border_pattern, Pattern::solid(1.0)); // inherited
     }
 }

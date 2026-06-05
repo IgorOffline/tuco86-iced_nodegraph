@@ -47,36 +47,26 @@ use iced::{Color, Length, Point, Size, Vector};
 
 use crate::ids::{EdgeId, IdMaps, NodeId, PinId};
 use crate::node_pin::{PinEnd, PinInfo, PinReference};
-use crate::style::{
-    EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus, PinStyle, Resolved,
-};
+use crate::style::{EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus, PinStyle};
 
 /// Per-node style callback: theme + status -> resolved style. Used by [`Node`].
-pub(crate) type NodeStyleFn<'a, Theme> =
-    Box<dyn Fn(&Theme, NodeStatus) -> NodeStyle<Resolved> + 'a>;
+pub(crate) type NodeStyleFn<'a, Theme> = Box<dyn Fn(&Theme, NodeStatus) -> NodeStyle + 'a>;
 /// Per-edge style callback: theme + status + both endpoint pin infos (in draw
 /// order: start = output side, end = input side) -> resolved style. Used by
 /// [`Edge`].
-pub(crate) type EdgeStyleFn<'a, P, UI, Theme> = Box<
-    dyn Fn(&Theme, EdgeStatus, PinInfo<'_, P, UI>, PinInfo<'_, P, UI>) -> EdgeStyle<Resolved> + 'a,
->;
+pub(crate) type EdgeStyleFn<'a, P, UI, Theme> =
+    Box<dyn Fn(&Theme, EdgeStatus, PinInfo<'_, P, UI>, PinInfo<'_, P, UI>) -> EdgeStyle + 'a>;
 /// Per-node pin style callback: theme + this pin's info + the other endpoint's
 /// info (the drag source during an edge drag, else `None`) + status -> resolved
 /// pin style. The node styles all of its pins (pins carry no style of their
 /// own). Used by [`Node::pin_style`].
 pub(crate) type PinStyleFn<'a, P, UI, Theme> = Box<
-    dyn Fn(
-            &Theme,
-            &PinInfo<'_, P, UI>,
-            Option<&PinInfo<'_, P, UI>>,
-            PinStatus,
-        ) -> PinStyle<Resolved>
-        + 'a,
+    dyn Fn(&Theme, &PinInfo<'_, P, UI>, Option<&PinInfo<'_, P, UI>>, PinStatus) -> PinStyle + 'a,
 >;
 /// Drag-edge style callback: theme + the source pin's info -> resolved style. A
 /// freshly dragged edge has no status. Used by [`NodeGraph::dragging_edge_style`].
 pub(crate) type DragEdgeStyleFn<'a, P, UI, Theme> =
-    Box<dyn Fn(&Theme, PinInfo<'_, P, UI>) -> EdgeStyle<Resolved> + 'a>;
+    Box<dyn Fn(&Theme, PinInfo<'_, P, UI>) -> EdgeStyle + 'a>;
 
 /// A node to push onto the graph: id, position, content element, an optional
 /// per-node style closure, and an optional closure styling all of its pins.
@@ -111,14 +101,12 @@ impl<'a, N, P, UI, Message, Theme, Renderer> Node<'a, N, P, UI, Message, Theme, 
     /// [`NodeStatus`], returns the resolved style. Layer over the built-in
     /// default:
     /// ```ignore
-    /// node(0, pos, el).style(|theme, status| {
-    ///     NodeStyle::new()
-    ///         .fill_color(Color::WHITE)
-    ///         .merge(&default_node_style(theme, status))
-    ///         .resolve()
+    /// node(0, pos, el).style(|theme, status| NodeStyle {
+    ///     fill_color: Color::WHITE.into(),
+    ///     ..default_node_style(theme, status)
     /// })
     /// ```
-    pub fn style(mut self, f: impl Fn(&Theme, NodeStatus) -> NodeStyle<Resolved> + 'a) -> Self {
+    pub fn style(mut self, f: impl Fn(&Theme, NodeStatus) -> NodeStyle + 'a) -> Self {
         self.style_fn = Some(Box::new(f));
         self
     }
@@ -128,21 +116,14 @@ impl<'a, N, P, UI, Message, Theme, Renderer> Node<'a, N, P, UI, Message, Theme, 
     /// endpoint's info (the drag source during an edge drag, else `None`) and
     /// the pin's [`PinStatus`], returns the resolved pin style.
     /// ```ignore
-    /// node(0, pos, el).pin_style(|theme, pin, other, status| {
-    ///     default_pin_style(theme, status)
-    ///         .color(color_for(pin.info()))
-    ///         .resolve()
+    /// node(0, pos, el).pin_style(|theme, pin, other, status| PinStyle {
+    ///     color: color_for(pin.info()).into(),
+    ///     ..default_pin_style(theme, status)
     /// })
     /// ```
     pub fn pin_style(
         mut self,
-        f: impl Fn(
-            &Theme,
-            &PinInfo<'_, P, UI>,
-            Option<&PinInfo<'_, P, UI>>,
-            PinStatus,
-        ) -> PinStyle<Resolved>
-        + 'a,
+        f: impl Fn(&Theme, &PinInfo<'_, P, UI>, Option<&PinInfo<'_, P, UI>>, PinStatus) -> PinStyle + 'a,
     ) -> Self {
         self.pin_style_fn = Some(Box::new(f));
         self
@@ -176,8 +157,7 @@ impl<'a, N, P, UI, Theme> Edge<'a, N, P, UI, Theme> {
     /// resolved style.
     pub fn style(
         mut self,
-        f: impl Fn(&Theme, EdgeStatus, PinInfo<'_, P, UI>, PinInfo<'_, P, UI>) -> EdgeStyle<Resolved>
-        + 'a,
+        f: impl Fn(&Theme, EdgeStatus, PinInfo<'_, P, UI>, PinInfo<'_, P, UI>) -> EdgeStyle + 'a,
     ) -> Self {
         self.style_fn = Some(Box::new(f));
         self
@@ -569,7 +549,7 @@ where
     /// the theme; the source pin's color is injected for inheriting stroke ends.
     pub fn dragging_edge_style(
         mut self,
-        f: impl Fn(&Theme, PinInfo<'_, P, UI>) -> EdgeStyle<Resolved> + 'a,
+        f: impl Fn(&Theme, PinInfo<'_, P, UI>) -> EdgeStyle + 'a,
     ) -> Self {
         self.dragging_edge_style_fn = Some(Box::new(f));
         self
