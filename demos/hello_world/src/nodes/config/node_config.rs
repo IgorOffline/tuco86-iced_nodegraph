@@ -2,12 +2,13 @@
 //!
 //! Builds a NodeConfig from individual field inputs with inheritance support.
 
+use demo_common::NodeContentStyle;
 use iced::{
     Color, Length,
     alignment::Horizontal,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{NodeContentStyle, Pattern, pin};
+use iced_nodegraph::{Pattern, pin};
 
 use crate::nodes::{colors, node_title_bar, pins, section_header_with_pins};
 use crate::style_overlay::NodeOverlay;

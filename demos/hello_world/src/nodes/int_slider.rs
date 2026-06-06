@@ -3,12 +3,13 @@
 //! Outputs a configurable integer value via slider.
 //! Supports expandable options for configuring min/max.
 
+use demo_common::NodeContentStyle;
 use iced::{
     Color, Length,
     alignment::Horizontal,
     widget::{button, column, container, row, slider, text},
 };
-use iced_nodegraph::{NodeContentStyle, node_footer, pin};
+use iced_nodegraph::{node_footer, pin};
 
 use super::{colors, node_title_bar, pins};
 

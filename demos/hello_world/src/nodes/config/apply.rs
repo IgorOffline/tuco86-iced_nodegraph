@@ -2,12 +2,13 @@
 //!
 //! Nodes that apply configurations to the graph or specific nodes.
 
+use demo_common::NodeContentStyle;
 use iced::{
     Length,
     alignment::Horizontal,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{NodeContentStyle, pin};
+use iced_nodegraph::pin;
 
 use crate::nodes::{node_title_bar, pins};
 

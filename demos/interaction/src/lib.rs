@@ -33,6 +33,7 @@
 //! - Integer implicitly converts to Float
 //! - Single-connection pins reject additional connections
 
+use demo_common::{NodeContentStyle, simple_node};
 use demo_common::{ScreenshotHelper, ScreenshotMessage};
 use iced::{
     Color, Element, Length, Point, Subscription, Theme, Vector,
@@ -40,8 +41,7 @@ use iced::{
     widget::{Space, button, column, container, row, scrollable, text},
 };
 use iced_nodegraph::{
-    NodeContentStyle, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge,
-    node, pin, simple_node,
+    PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge, node, pin,
 };
 use std::collections::{HashMap, HashSet};
 

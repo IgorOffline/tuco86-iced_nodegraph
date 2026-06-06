@@ -2,12 +2,13 @@
 //!
 //! Outputs a configurable color value via RGB sliders or presets.
 
+use demo_common::NodeContentStyle;
 use iced::{
     Color, Length,
     alignment::Horizontal,
     widget::{button, column, container, row, slider, text},
 };
-use iced_nodegraph::{NodeContentStyle, pin};
+use iced_nodegraph::pin;
 
 use super::{colors, node_title_bar, pins};
 

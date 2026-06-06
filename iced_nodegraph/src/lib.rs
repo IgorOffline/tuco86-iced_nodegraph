@@ -188,9 +188,7 @@
 //! }
 //! ```
 
-pub use content::{
-    ContentPosition, EdgeRadii, NodeContentStyle, node_footer, node_header, simple_node,
-};
+pub use content::{EdgeRadii, node_footer, node_header};
 pub use ids::{NodeId, PinId};
 pub use node_graph::{
     Edge, Node, NodeGraph, PinRef, SdfDebug, camera::Camera2D, edge, node, widget::node_graph,

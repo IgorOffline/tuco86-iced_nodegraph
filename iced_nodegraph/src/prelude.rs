@@ -23,5 +23,5 @@ pub use crate::{
     default_node_style, default_pin_style,
 };
 
-// Helpers for laying out a node's interior.
-pub use crate::{NodeContentStyle, node_footer, node_header, simple_node};
+// Rounded header/footer helpers for node interiors.
+pub use crate::{node_footer, node_header};

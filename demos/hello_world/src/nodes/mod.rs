@@ -31,12 +31,13 @@ pub use float_slider::{FloatSliderConfig, float_slider_node};
 pub use int_slider::{IntSliderConfig, int_slider_node};
 pub use math::math_node;
 
+use demo_common::NodeContentStyle;
 use iced::{
     Color, Element, Length, Padding, Theme,
     alignment::Horizontal,
     widget::{Container, Row, container, row, text},
 };
-use iced_nodegraph::{EdgeCurve, NodeContentStyle, PinShape, node_header};
+use iced_nodegraph::{EdgeCurve, PinShape, node_header};
 
 use crate::style_overlay::{EdgeOverlay, NodeOverlay, PinOverlay};
 

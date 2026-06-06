@@ -2,12 +2,13 @@
 //!
 //! Builds a PinConfig from individual field inputs with inheritance support.
 
+use demo_common::NodeContentStyle;
 use iced::{
     Color, Length,
     alignment::Horizontal,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{NodeContentStyle, PinShape, pin};
+use iced_nodegraph::{PinShape, pin};
 
 use crate::nodes::{colors, node_title_bar, pins};
 use crate::style_overlay::PinOverlay;

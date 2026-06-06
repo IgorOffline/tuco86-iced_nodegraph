@@ -33,12 +33,17 @@ pub const TEXT_MUTED:       Color = Color::from_rgb(0.631, 0.631, 0.667);  // #A
 
 ### Theme Integration
 
-Use `NodeContentStyle` from the theme for dynamic colors:
+Derive interior colors from the active theme's palette so nodes adapt to every theme:
 
 ```rust
-let style = NodeContentStyle::from_theme(theme);
-// style.title_background, style.body_background, style.title_text, etc.
+let palette = theme.extended_palette();
+let title_background = palette.primary.base.color;
+let title_text = palette.background.base.text;
 ```
+
+The demos wrap this in a `demo_common::NodeContentStyle` convenience
+(`::input(theme)`, `::process(theme)`, ...); it lives in the demos, not the widget,
+since interior theming is the application's concern.
 
 ---
 
@@ -245,7 +250,7 @@ Visual hierarchy through consistent title bar colors:
 | Config   | Cyan tint    | Settings, parameters      |
 | Comment  | Gray         | Notes, documentation      |
 
-Use `NodeContentStyle::input(theme)`, `.process(theme)`, etc.
+The demos' `demo_common::NodeContentStyle::input(theme)`, `.process(theme)`, etc. provide ready-made palettes for these categories.
 
 ---
 
@@ -263,11 +268,12 @@ pub fn my_node<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let style = NodeContentStyle::from_theme(theme);
-    // or: NodeContentStyle::input(theme)
+    let header_bg = theme.extended_palette().primary.base.color;
 
     column![
-        node_header(title, style),
+        // node_header(content, background, radii) rounds the top corners to
+        // match the node's rendered silhouette.
+        node_header(text(title), header_bg, 5.0),
         container(content).padding(PADDING_CONTENT),
         // optional: node_footer(...)
     ]

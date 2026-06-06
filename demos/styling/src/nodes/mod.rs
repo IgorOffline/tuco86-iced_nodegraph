@@ -1,9 +1,10 @@
+use demo_common::NodeContentStyle;
 use iced::{
     Length, Padding,
     alignment::Horizontal,
     widget::{Container, column, container, row, text},
 };
-use iced_nodegraph::{NodeContentStyle, NodeStyle, node_header, pin};
+use iced_nodegraph::{NodeStyle, node_header, pin};
 
 /// Marker type for generic data pins
 pub struct Data;

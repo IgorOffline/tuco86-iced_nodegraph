@@ -3,12 +3,13 @@
 //! Outputs a boolean value via modern switch toggle.
 //! Industrial Precision design: clean pill track, responsive thumb.
 
+use demo_common::NodeContentStyle;
 use iced::{
     Color, Length,
     alignment::Horizontal,
     widget::{column, container, row, text, toggler},
 };
-use iced_nodegraph::{NodeContentStyle, pin};
+use iced_nodegraph::pin;
 
 use super::{colors, node_title_bar, pins};
 

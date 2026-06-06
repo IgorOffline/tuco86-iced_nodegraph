@@ -2,11 +2,12 @@
 //!
 //! Builds an EdgeConfig from individual field inputs with inheritance support.
 
+use demo_common::NodeContentStyle;
 use iced::{
     Color, Length,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{ColorQuad, EdgeCurve, NodeContentStyle, Pattern, pin};
+use iced_nodegraph::{ColorQuad, EdgeCurve, Pattern, pin};
 
 use crate::nodes::{
     collapsed_pin_row, color_swatch, fmt_float, node_title_bar, pin_row, pins, push_section,

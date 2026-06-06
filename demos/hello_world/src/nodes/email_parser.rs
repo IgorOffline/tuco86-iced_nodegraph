@@ -1,9 +1,10 @@
+use demo_common::NodeContentStyle;
 use iced::{
     Length,
     alignment::Horizontal,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{NodeContentStyle, pin};
+use iced_nodegraph::pin;
 
 use super::{node_title_bar, pins};
 

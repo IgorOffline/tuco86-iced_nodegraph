@@ -8,4 +8,5 @@ publish = false
 
 [dependencies]
 iced = { workspace = true, features = ["advanced", "wgpu", "tokio"] }
+iced_nodegraph.workspace = true
 png = "0.17"

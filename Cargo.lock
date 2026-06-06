@@ -703,6 +703,7 @@ name = "demo_common"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "iced_nodegraph",
  "png 0.17.16",
 ]
 
@@ -711,6 +712,7 @@ name = "demo_hello_world"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "demo_common",
  "directories",
  "getrandom 0.2.17",
  "iced",
@@ -752,6 +754,7 @@ name = "demo_styling"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "demo_common",
  "iced",
  "iced_nodegraph",
  "wasm-bindgen",

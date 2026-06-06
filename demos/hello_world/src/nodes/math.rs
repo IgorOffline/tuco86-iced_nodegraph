@@ -4,11 +4,12 @@
 //! Supports Add, Subtract, Multiply, and Divide operations.
 //! Outputs can be chained to other Math nodes or Config nodes.
 
+use demo_common::NodeContentStyle;
 use iced::{
     Length,
     widget::{Space, column, container, row, text},
 };
-use iced_nodegraph::{NodeContentStyle, pin};
+use iced_nodegraph::pin;
 
 use super::{MathNodeState, colors, node_title_bar, pins};
 

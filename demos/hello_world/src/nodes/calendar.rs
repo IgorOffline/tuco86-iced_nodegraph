@@ -1,5 +1,6 @@
+use demo_common::NodeContentStyle;
 use iced::widget::{column, container, text};
-use iced_nodegraph::{NodeContentStyle, pin};
+use iced_nodegraph::pin;
 
 use super::{node_title_bar, pins};
 

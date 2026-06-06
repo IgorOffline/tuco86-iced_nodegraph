@@ -17,7 +17,7 @@
 //!     cargo run -p iced_nodegraph --example basic
 
 use iced::widget::{checkbox, column, container, slider, text};
-use iced::{Color, Element, Point, Theme, Vector};
+use iced::{Color, Element, Length, Padding, Point, Theme, Vector};
 use iced_nodegraph::prelude::*;
 
 fn main() -> iced::Result {
@@ -146,6 +146,28 @@ fn gate<'a>(
     node(id, pos, container(body).width(150.0)).pin_style(pin_style)
 }
 
+/// A titled node interior: a colored header bar over the body. `node_header`
+/// rounds the bar's top corners to `5.0` so it matches the node's rendered
+/// silhouette (the widget draws the fill with the same corner radius).
+fn framed<'a>(
+    title: &'a str,
+    header_bg: Color,
+    body: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let pad = Padding {
+        top: 4.0,
+        bottom: 4.0,
+        left: 8.0,
+        right: 8.0,
+    };
+    column![
+        node_header(container(text(title).size(13)).padding(pad), header_bg, 5.0),
+        container(body).width(Length::Fill).padding(pad),
+    ]
+    .width(Length::Fill)
+    .into()
+}
+
 impl App {
     fn theme(&self) -> Theme {
         Theme::SolarizedLight
@@ -195,6 +217,11 @@ impl App {
     fn view(&self) -> Element<'_, Message> {
         let theme = self.theme();
         let p = &self.positions;
+        // Header colors keyed on node role, derived from the active theme palette.
+        let pal = theme.extended_palette();
+        let input_bg = pal.primary.base.color;
+        let process_bg = pal.success.base.color;
+        let output_bg = pal.secondary.base.color;
 
         // The graph is parameterized over `Port` as its pin payload (`UI`), so it
         // cannot use the `node_graph()` helper (which fixes `UI = ()`).
@@ -217,9 +244,9 @@ impl App {
         ng.push_node(gate(
             VALUE,
             p[VALUE],
-            simple_node(
+            framed(
                 "Value",
-                NodeContentStyle::input(&theme),
+                input_bg,
                 column![
                     slider(-1.0..=1.0, self.value, Message::Value).step(0.01),
                     text(format!("{:.2}", self.value)).size(11),
@@ -232,9 +259,9 @@ impl App {
         ng.push_node(gate(
             SWITCH,
             p[SWITCH],
-            simple_node(
+            framed(
                 "Switch",
-                NodeContentStyle::input(&theme),
+                input_bg,
                 column![
                     checkbox(self.switch).on_toggle(Message::Switch),
                     pin!(Right, 0usize, text("b"), Output, Port::Bool),
@@ -246,9 +273,9 @@ impl App {
         ng.push_node(gate(
             GT0,
             p[GT0],
-            simple_node(
+            framed(
                 ">0",
-                NodeContentStyle::process(&theme),
+                process_bg,
                 column![
                     pin!(Left, 0usize, text("x"), Input, Port::Number),
                     pin!(Right, 1usize, text("out"), Output, Port::Bool),
@@ -260,9 +287,9 @@ impl App {
         ng.push_node(gate(
             AND,
             p[AND],
-            simple_node(
+            framed(
                 "AND",
-                NodeContentStyle::process(&theme),
+                process_bg,
                 column![
                     pin!(Left, 0usize, text("a"), Input, Port::Bool),
                     pin!(Left, 1usize, text("b"), Input, Port::Bool),
@@ -281,9 +308,9 @@ impl App {
         ng.push_node(gate(
             LAMP,
             p[LAMP],
-            simple_node(
+            framed(
                 "Lamp",
-                NodeContentStyle::output(&theme),
+                output_bg,
                 column![
                     pin!(Left, 0usize, text("in"), Input, Port::Bool),
                     text("\u{25CF}").size(22).color(lamp),

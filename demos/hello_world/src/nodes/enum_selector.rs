@@ -3,12 +3,13 @@
 //! Pill-style selection for EdgeCurve, PinShape, and PatternType enums.
 //! Industrial Precision design: compact pills, clear selection state.
 
+use demo_common::NodeContentStyle;
 use iced::{
     Border, Color, Length,
     alignment::Horizontal,
     widget::{button, column, container, row, text},
 };
-use iced_nodegraph::{EdgeCurve, NodeContentStyle, PinShape, pin};
+use iced_nodegraph::{EdgeCurve, PinShape, pin};
 
 use super::{PatternType, colors, node_title_bar, pins};
 

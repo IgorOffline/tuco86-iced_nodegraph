@@ -4,11 +4,12 @@
 //! Industrial Precision design: clean track, responsive handle.
 //! Supports expandable options for configuring min/max/step.
 
+use demo_common::NodeContentStyle;
 use iced::{
     Color, Length,
     widget::{button, column, container, row, slider, text, text_input},
 };
-use iced_nodegraph::{NodeContentStyle, node_footer, pin};
+use iced_nodegraph::{node_footer, pin};
 
 use super::{colors, node_title_bar, pins};
 
