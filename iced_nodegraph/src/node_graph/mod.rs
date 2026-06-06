@@ -13,7 +13,7 @@
 //!     .on_move(|node_id, pos| Message::NodeMoved { node_id, pos });
 //!
 //! ng.push_node(node(0, Point::new(100.0, 100.0), my_node_content));
-//! ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
+//! ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
 //! ```
 //!
 //! ## Architecture
@@ -43,7 +43,7 @@ use std::hash::Hash;
 
 use iced::{Length, Point, Size, Vector};
 
-use crate::ids::{IdMap, NodeId, PinId};
+use crate::ids::{EdgeId, IdMap, NodeId, PinId};
 use crate::node_pin::{PinEnd, PinInfo};
 use crate::style::{EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus, PinStyle};
 
@@ -128,28 +128,51 @@ impl<'a, N, P, UI, Message, Theme, Renderer> Node<'a, N, P, UI, Message, Theme, 
     }
 }
 
-/// An edge to push onto the graph: endpoint pin references and an optional
-/// per-edge status-driven style closure. Build with [`edge`] + [`Edge::style`],
-/// then add via [`NodeGraph::push_edge`].
-pub struct Edge<'a, N, P, UI, Theme> {
+/// An edge to push onto the graph: a user id, endpoint pin references, and an
+/// optional per-edge status-driven style closure. Build with [`edge`] +
+/// [`Edge::style`], then add via [`NodeGraph::push_edge`]. The id is the user's
+/// own (e.g. a DB key); it travels with the edge, symmetric to [`node`].
+pub struct Edge<'a, N, P, E, UI, Theme> {
+    id: E,
     from: PinRef<N, P>,
     to: PinRef<N, P>,
     style_fn: Option<EdgeStyleFn<'a, P, UI, Theme>>,
 }
 
-/// Creates an [`Edge`] with default (theme) styling.
-pub fn edge<'a, N, P, UI, Theme>(
+/// Creates an [`Edge`] with the given id and default (theme) styling.
+///
+/// The id comes last so the common no-id case reads cleanly via the [`edge!`]
+/// macro: `edge!(from, to)` expands to `edge(from, to, ())`.
+pub fn edge<'a, N, P, E, UI, Theme>(
     from: PinRef<N, P>,
     to: PinRef<N, P>,
-) -> Edge<'a, N, P, UI, Theme> {
+    id: E,
+) -> Edge<'a, N, P, E, UI, Theme> {
     Edge {
+        id,
         from,
         to,
         style_fn: None,
     }
 }
 
-impl<'a, N, P, UI, Theme> Edge<'a, N, P, UI, Theme> {
+/// Builds an [`Edge`], defaulting the id to `()` when omitted.
+///
+/// ```ignore
+/// edge!(PinRef::new(0, 0), PinRef::new(1, 0))       // id = ()
+/// edge!(PinRef::new(0, 0), PinRef::new(1, 0), my_id) // id = my_id
+/// ```
+#[macro_export]
+macro_rules! edge {
+    ($from:expr, $to:expr $(,)?) => {
+        $crate::edge($from, $to, ())
+    };
+    ($from:expr, $to:expr, $id:expr $(,)?) => {
+        $crate::edge($from, $to, $id)
+    };
+}
+
+impl<'a, N, P, E, UI, Theme> Edge<'a, N, P, E, UI, Theme> {
     /// Sets the per-edge style closure: theme, [`EdgeStatus`], and both endpoint
     /// [`PinInfo`]s in draw order (start = output side, end = input side) ->
     /// resolved style.
@@ -226,7 +249,8 @@ impl<N: Clone, P: Clone> PinRef<N, P> {
 /// - `Theme`: Iced theme type (defaults to `iced::Theme`)
 /// - `Renderer`: Iced renderer type (defaults to `iced::Renderer`)
 ///
-/// Users can provide their own ID types by implementing [`NodeId`] and [`PinId`].
+/// Users can provide their own ID types by implementing [`NodeId`], [`PinId`]
+/// and [`EdgeId`].
 #[allow(missing_debug_implementations)]
 pub struct NodeGraph<
     'a,
@@ -236,9 +260,11 @@ pub struct NodeGraph<
     Message = (),
     Theme = iced::Theme,
     Renderer = iced::Renderer,
+    E = (),
 > where
     N: NodeId,
     P: PinId,
+    E: EdgeId,
 {
     pub(super) size: Size<Length>,
     /// Nodes with position, element, and config overrides.
@@ -255,6 +281,7 @@ pub struct NodeGraph<
     /// Config fields set to Some() override theme defaults.
     /// None fields use `default_edge_style()` values at render time.
     pub(super) edges: Vec<(
+        E,
         PinRef<N, P>,
         PinRef<N, P>,
         Option<EdgeStyleFn<'a, P, UI, Theme>>,
@@ -303,11 +330,12 @@ pub struct NodeGraph<
     pub(super) sdf_debug: SdfDebug,
 }
 
-impl<N, P, UI, Message, Theme, Renderer> Default
-    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer>
+impl<N, P, E, UI, Message, Theme, Renderer> Default
+    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
 where
     N: NodeId,
     P: PinId,
+    E: EdgeId,
     Renderer: iced_widget::core::renderer::Renderer,
 {
     fn default() -> Self {
@@ -339,10 +367,11 @@ where
     }
 }
 
-impl<'a, N, P, UI, Message, Theme, Renderer> NodeGraph<'a, N, P, UI, Message, Theme, Renderer>
+impl<'a, N, P, E, UI, Message, Theme, Renderer> NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer,
 {
     /// Sets the initial camera position and zoom level.
@@ -372,8 +401,9 @@ where
     /// Pin IDs are resolved to local indices at render time; the widget
     /// normalizes orientation so the output pin is the edge start (output ->
     /// input).
-    pub fn push_edge(&mut self, edge: Edge<'a, N, P, UI, Theme>) {
-        self.edges.push((edge.from, edge.to, edge.style_fn));
+    pub fn push_edge(&mut self, edge: Edge<'a, N, P, E, UI, Theme>) {
+        self.edges
+            .push((edge.id, edge.from, edge.to, edge.style_fn));
     }
 
     /// Translates internal node index to user's node ID.

@@ -383,7 +383,7 @@ fn pin_graph(connect_ok: bool, seed_edge: bool) -> Element<'static, Msg, Theme, 
     ));
     ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
     if seed_edge {
-        ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
+        ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
     }
     ng.into()
 }
@@ -607,7 +607,7 @@ fn rewire_graph() -> Element<'static, Msg, Theme, Renderer> {
         Point::new(IN_POS.x, 300.0),
         pin!(Left, 0usize, pin_body(), Input),
     ));
-    ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
+    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
     ng.into()
 }
 
@@ -951,7 +951,7 @@ fn zoomed_pin_graph(seed_edge: bool) -> Element<'static, Msg, Theme, Renderer> {
     ));
     ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
     if seed_edge {
-        ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
+        ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
     }
     ng.into()
 }

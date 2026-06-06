@@ -231,7 +231,7 @@ impl Application {
 
         // Add all edges
         for (from, to) in &self.edges {
-            ng.push_edge(edge(*from, *to));
+            ng.push_edge(edge!(*from, *to));
         }
 
         // Add stats overlay with SDF pipeline metrics

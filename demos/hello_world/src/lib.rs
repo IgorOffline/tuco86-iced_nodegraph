@@ -1690,6 +1690,7 @@ impl Application {
             ApplicationMessage,
             Theme,
             iced::Renderer,
+            EdgeId,
         > = NodeGraph::default();
 
         ng = ng
@@ -1925,18 +1926,20 @@ impl Application {
                 let from = PinRef::new(edge_data.from_node.clone(), edge_data.from_pin);
                 let to = PinRef::new(edge_data.to_node.clone(), edge_data.to_pin);
                 let overlay = edge_overlay.clone();
-                ng.push_edge(ng_edge(from, to).style(move |theme, status, start, end| {
-                    // Edges follow their connected pins' data-type colors; the
-                    // Edge Config overlay (if set) overrides the inherited stroke.
-                    let base = EdgeStyle {
-                        stroke_color: ColorQuad::arc(
-                            pin_color_for(*start.info()),
-                            pin_color_for(*end.info()),
-                        ),
-                        ..default_edge_style(theme, status)
-                    };
-                    overlay.resolve_over(base)
-                }));
+                ng.push_edge(ng_edge(from, to, edge_id.clone()).style(
+                    move |theme, status, start, end| {
+                        // Edges follow their connected pins' data-type colors; the
+                        // Edge Config overlay (if set) overrides the inherited stroke.
+                        let base = EdgeStyle {
+                            stroke_color: ColorQuad::arc(
+                                pin_color_for(*start.info()),
+                                pin_color_for(*end.info()),
+                            ),
+                            ..default_edge_style(theme, status)
+                        };
+                        overlay.resolve_over(base)
+                    },
+                ));
             }
         }
 

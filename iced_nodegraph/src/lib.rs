@@ -47,9 +47,9 @@
 //!     ng.push_node(node(0, Point::new(100.0, 100.0), text("Node A")));
 //!     ng.push_node(node(1, Point::new(300.0, 100.0), text("Node B")));
 //!
-//!     // Add edges using type-safe PinRef
+//!     // Add edges with type-safe PinRef; edge! defaults the id to ()
 //!     for (from, to) in edges {
-//!         ng.push_edge(edge(*from, *to));
+//!         ng.push_edge(edge!(*from, *to));
 //!     }
 //!
 //!     ng.into()
@@ -189,7 +189,7 @@
 //! ```
 
 pub use content::{EdgeRadii, node_footer, node_header};
-pub use ids::{NodeId, PinId};
+pub use ids::{EdgeId, NodeId, PinId};
 pub use node_graph::{
     Edge, Node, NodeGraph, PinRef, SdfDebug, camera::Camera2D, edge, node, widget::node_graph,
 };

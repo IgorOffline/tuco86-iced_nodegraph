@@ -30,7 +30,7 @@ use super::{
 use super::{EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use crate::{
     PinDirection, PinRef, PinSide,
-    ids::{NodeId, PinId},
+    ids::{EdgeId, NodeId, PinId},
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::{NodePinState, PinEnd, PinInfo},
     style::{
@@ -331,11 +331,12 @@ fn pin_cutout_circles<P: PinId + 'static, UI>(
     cuts
 }
 
-impl<N, P, UI, Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
-    for NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer>
+impl<N, P, E, UI, Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
+    for NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_widget::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -517,7 +518,7 @@ where
 
             let mut batch = SdfPrimitive::with_capacity(self.edges.len() * 4);
 
-            for (edge_idx, (from, to, edge_style_fn)) in self.edges.iter().enumerate() {
+            for (edge_idx, (_edge_id, from, to, edge_style_fn)) in self.edges.iter().enumerate() {
                 let Some(from_node_idx) = self.node_ids.index(&from.node_id) else {
                     continue;
                 };
@@ -1405,7 +1406,7 @@ where
                                         pending_cuts.clear();
 
                                         // Check each edge for intersection with the cutting line
-                                        for (edge_idx, (from_ref, to_ref, _style)) in
+                                        for (edge_idx, (_id, from_ref, to_ref, _style)) in
                                             self.edges.iter().enumerate()
                                         {
                                             // Resolve user IDs to indices
@@ -1503,7 +1504,7 @@ where
                                 if let Dragging::EdgeCutting { pending_cuts, .. } = &state.dragging
                                 {
                                     for &edge_idx in pending_cuts.iter() {
-                                        if let Some((from_ref, to_ref, _)) =
+                                        if let Some((_id, from_ref, to_ref, _)) =
                                             self.edges.get(edge_idx)
                                         {
                                             // Edges already store user IDs (PinRef<N, P>)
@@ -1920,7 +1921,7 @@ where
                                 && let Some(cursor_position) = world_cursor.position()
                             {
                                 // Check if click is near any edge
-                                for (from_ref, to_ref, _style) in &self.edges {
+                                for (_id, from_ref, to_ref, _style) in &self.edges {
                                     // Resolve user IDs to indices
                                     let from_node_idx = match self.node_ids.index(&from_ref.node_id)
                                     {
@@ -2024,7 +2025,7 @@ where
                                         {
                                             // Check if this pin has existing connections
                                             // If it does, "unplug" the clicked end (like pulling a cable)
-                                            for (from_ref, to_ref, _style) in &self.edges {
+                                            for (_id, from_ref, to_ref, _style) in &self.edges {
                                                 // If we clicked the "from" pin, unplug FROM and drag it
                                                 // Keep TO pin connected, drag away from it
                                                 if from_ref.node_id == current_node_id
@@ -2320,16 +2321,18 @@ where
     }
 }
 
-impl<'a, N, P, UI, Message, Renderer> From<NodeGraph<'a, N, P, UI, Message, iced::Theme, Renderer>>
+impl<'a, N, P, E, UI, Message, Renderer>
+    From<NodeGraph<'a, N, P, UI, Message, iced::Theme, Renderer, E>>
     for Element<'a, Message, iced::Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_widget::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
 {
-    fn from(graph: NodeGraph<'a, N, P, UI, Message, iced::Theme, Renderer>) -> Self {
+    fn from(graph: NodeGraph<'a, N, P, UI, Message, iced::Theme, Renderer, E>) -> Self {
         Element::new(graph)
     }
 }
@@ -2337,7 +2340,7 @@ where
 /// Creates a new NodeGraph with default usize-based IDs and no pin user info.
 ///
 /// For custom types, use
-/// `NodeGraph::<N, P, UI, Message, Theme, Renderer>::default()`.
+/// `NodeGraph::<N, P, UI, Message, Theme, Renderer, E>::default()`.
 pub fn node_graph<'a, Message, Theme, Renderer>()
 -> NodeGraph<'a, usize, usize, (), Message, Theme, Renderer>
 where
@@ -2427,8 +2430,8 @@ fn validate_pin_direction<P, UI>(
 /// 2. It is not interaction-disabled
 /// 3. The `can_connect` closure accepts the pair (authoritative when set);
 ///    otherwise the built-in direction check passes (Output<->Input, Both).
-fn compute_valid_targets<N, P, UI, Message, Renderer>(
-    graph: &NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer>,
+fn compute_valid_targets<N, P, E, UI, Message, Renderer>(
+    graph: &NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer, E>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,
@@ -2437,6 +2440,7 @@ fn compute_valid_targets<N, P, UI, Message, Renderer>(
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_widget::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
