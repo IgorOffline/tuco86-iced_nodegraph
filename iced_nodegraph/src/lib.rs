@@ -16,7 +16,7 @@
 //!
 //! - **Nodes** - Draggable containers for your custom widgets
 //! - **Pins** - Connection points on nodes with type checking and visual feedback
-//! - **Edges** - Connect pins to build data flow graphs with type-safe [`PinReference`]
+//! - **Edges** - Connect pins to build data flow graphs with type-safe [`PinRef`]
 //! - **Interactive Connections** - Drag to connect, click edges to re-route (cable-like unplugging)
 //! - **Selection** - Multi-select with box selection, clone (Ctrl+D), delete (Delete key)
 //! - **Zoom & Pan** - Smooth infinite canvas navigation with [`Camera2D`]
@@ -58,12 +58,12 @@
 //!
 //! ## Core Types
 //!
-//! ### [`PinReference`]
-//! Type-safe identifier for pin connections:
+//! ### [`PinRef`]
+//! Type-safe identifier for a pin connection, generic over your node/pin id types:
 //! ```rust
-//! use iced_nodegraph::PinReference;
+//! use iced_nodegraph::PinRef;
 //!
-//! let pin = PinReference::new(0, 1); // node 0, pin 1
+//! let pin = PinRef::new(0, 1); // node 0, pin 1
 //! assert_eq!(pin.node_id, 0);
 //! assert_eq!(pin.pin_id, 1);
 //! ```
@@ -195,7 +195,7 @@ pub use ids::{NodeId, PinId};
 pub use node_graph::{
     Edge, Node, NodeGraph, PinRef, SdfDebug, camera::Camera2D, edge, node, widget::node_graph,
 };
-pub use node_pin::{NodePin, PinDirection, PinEnd, PinInfo, PinReference, PinSide, node_pin};
+pub use node_pin::{NodePin, PinDirection, PinEnd, PinInfo, PinSide, node_pin};
 pub use style::{
     // Unified color type for style fields
     ColorQuad,

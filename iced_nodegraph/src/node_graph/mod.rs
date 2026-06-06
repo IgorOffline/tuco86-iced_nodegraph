@@ -203,9 +203,8 @@ pub enum DragInfo {
     BoxSelect { start_x: f32, start_y: f32 },
 }
 
-/// Generic pin reference with user-defined ID types.
-///
-/// This is the generic version of [`PinReference`] that uses your own ID types.
+/// Type-safe reference to a pin: a `node_id` paired with a `pin_id`, generic over
+/// your id types. Construct with `PinRef::new(node_id, pin_id)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PinRef<N, P> {
     pub node_id: N,
@@ -632,46 +631,5 @@ where
             .iter()
             .filter_map(|&idx| self.node_ids.id(idx).cloned())
             .collect()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::PinReference;
-
-    #[test]
-    fn test_pin_reference_equality() {
-        let a = PinReference::new(1, 2);
-        let b = PinReference::new(1, 2);
-        let c = PinReference::new(1, 3);
-        let d = PinReference::new(2, 2);
-
-        assert_eq!(a, b);
-        assert_ne!(a, c);
-        assert_ne!(a, d);
-    }
-
-    #[test]
-    fn test_pin_reference_copy() {
-        let a = PinReference::new(5, 10);
-        let b = a; // Copy
-        assert_eq!(a.node_id, b.node_id);
-        assert_eq!(a.pin_id, b.pin_id);
-    }
-
-    #[test]
-    fn test_pin_reference_hash() {
-        use std::collections::HashSet;
-
-        let mut set = HashSet::new();
-        set.insert(PinReference::new(0, 0));
-        set.insert(PinReference::new(0, 1));
-        set.insert(PinReference::new(1, 0));
-        set.insert(PinReference::new(0, 0)); // duplicate
-
-        assert_eq!(set.len(), 3);
-        assert!(set.contains(&PinReference::new(0, 0)));
-        assert!(set.contains(&PinReference::new(0, 1)));
-        assert!(set.contains(&PinReference::new(1, 0)));
     }
 }

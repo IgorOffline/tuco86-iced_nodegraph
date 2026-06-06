@@ -49,13 +49,6 @@ fn hash_pin_id<P: Hash>(pin_id: &P) -> u64 {
     hasher.finish()
 }
 
-/// A reference to a specific pin on a specific node.
-///
-/// The `usize`-indexed specialization of [`PinRef`](crate::PinRef), used by the
-/// default API. Construct with `PinReference::new(node_id, pin_id)`; the fields
-/// are `node_id` and `pin_id`.
-pub type PinReference = crate::node_graph::PinRef<usize, usize>;
-
 /// Which side of a node this pin attaches to.
 /// Determines the tangent direction for edge bezier curves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
