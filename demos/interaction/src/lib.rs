@@ -164,14 +164,10 @@ enum Message {
         from: PinRef<usize, usize>,
         to: PinRef<usize, usize>,
     },
-    NodeMoved {
-        node_id: usize,
-        position: Point,
-    },
     SelectionChanged(Vec<usize>),
-    GroupMoved {
-        node_ids: Vec<usize>,
+    NodesMoved {
         delta: Vector,
+        node_ids: Vec<usize>,
     },
     ClearAll,
     Reset,
@@ -396,13 +392,10 @@ impl App {
                     ));
                 }
             }
-            Message::NodeMoved { node_id, position } => {
-                self.node_positions.insert(node_id, position);
-            }
             Message::SelectionChanged(node_ids) => {
                 self.selected_nodes = node_ids.into_iter().collect();
             }
-            Message::GroupMoved { node_ids, delta } => {
+            Message::NodesMoved { delta, node_ids } => {
                 for id in node_ids {
                     if let Some(pos) = self.node_positions.get_mut(&id) {
                         pos.x += delta.x;
@@ -467,9 +460,8 @@ impl App {
                 })
                 .on_connect(|from, to| Message::EdgeConnected { from, to })
                 .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
-                .on_move(|node_id, position| Message::NodeMoved { node_id, position })
+                .on_move(|delta, node_ids| Message::NodesMoved { delta, node_ids })
                 .on_select(Message::SelectionChanged)
-                .on_group_move(|node_ids, delta| Message::GroupMoved { node_ids, delta })
                 .selection(&self.selected_nodes);
 
         // Node 0: Number Generator

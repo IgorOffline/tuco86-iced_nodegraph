@@ -60,7 +60,7 @@ use iced::{Element, Point};
 fn view(&self) -> Element<Message> {
     let mut ng = node_graph()
         .on_connect(|from, to| Message::Connected(from, to))
-        .on_move(|node_id, position| Message::Moved(node_id, position));
+        .on_move(|delta, node_ids| Message::Moved(delta, node_ids));
 
     // Nodes are built with node(id, position, widget) and pushed onto the graph.
     ng.push_node(node(0, Point::new(200.0, 150.0), my_node_widget()));

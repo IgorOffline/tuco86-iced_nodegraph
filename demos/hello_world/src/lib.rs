@@ -139,10 +139,6 @@ enum ApplicationMessage {
         from: PinRef<NodeId, PinLabel>,
         to: PinRef<NodeId, PinLabel>,
     },
-    NodeMoved {
-        node_id: NodeId,
-        new_position: Point,
-    },
     EdgeDisconnected {
         from: PinRef<NodeId, PinLabel>,
         to: PinRef<NodeId, PinLabel>,
@@ -174,9 +170,9 @@ enum ApplicationMessage {
     SelectionChanged(Vec<NodeId>),
     CloneNodes(Vec<NodeId>),
     DeleteNodes(Vec<NodeId>),
-    GroupMoved {
-        node_ids: Vec<NodeId>,
+    NodesMoved {
         delta: Vector,
+        node_ids: Vec<NodeId>,
     },
     // State export for Claude
     ExportState,
@@ -1105,16 +1101,6 @@ impl Application {
                 self.save_state();
                 Task::none()
             }
-            ApplicationMessage::NodeMoved {
-                node_id,
-                new_position,
-            } => {
-                if let Some((position, _)) = self.nodes.get_mut(&node_id) {
-                    *position = new_position;
-                }
-                self.save_state();
-                Task::none()
-            }
             ApplicationMessage::EdgeDisconnected { from, to } => {
                 // Find and remove the edge by matching from/to
                 let edge_to_remove: Option<EdgeId> = self
@@ -1439,7 +1425,7 @@ impl Application {
                 self.save_state();
                 Task::none()
             }
-            ApplicationMessage::GroupMoved { node_ids, delta } => {
+            ApplicationMessage::NodesMoved { delta, node_ids } => {
                 for node_id in node_ids {
                     if let Some((pos, _)) = self.nodes.get_mut(&node_id) {
                         pos.x += delta.x;
@@ -1704,14 +1690,10 @@ impl Application {
                     ApplicationMessage::EdgeDisconnected { from, to }
                 },
             )
-            .on_move(|node_id, new_position| ApplicationMessage::NodeMoved {
-                node_id,
-                new_position,
-            })
+            .on_move(|delta, node_ids| ApplicationMessage::NodesMoved { delta, node_ids })
             .on_select(ApplicationMessage::SelectionChanged)
             .on_clone(ApplicationMessage::CloneNodes)
             .on_delete(ApplicationMessage::DeleteNodes)
-            .on_group_move(|node_ids, delta| ApplicationMessage::GroupMoved { node_ids, delta })
             .on_camera_change(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
             .initial_camera(self.camera_position, self.camera_zoom)
             // Selection highlight and pending-cut feedback are handled internally

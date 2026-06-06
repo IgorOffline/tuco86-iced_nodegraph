@@ -26,8 +26,7 @@ type Pin = PinRef<usize, usize>;
 #[derive(Debug, Clone, PartialEq)]
 enum Msg {
     Select(Vec<usize>),
-    Move(usize, Point),
-    GroupMove(Vec<usize>, Vector),
+    Move(Vector, Vec<usize>),
     Clone(Vec<usize>),
     Delete(Vec<usize>),
     Connect(Pin, Pin),
@@ -48,7 +47,6 @@ fn graph_with(nodes: &[(usize, Point)]) -> Element<'static, Msg, Theme, Renderer
         .height(Length::Fill)
         .on_select(Msg::Select)
         .on_move(Msg::Move)
-        .on_group_move(Msg::GroupMove)
         .on_clone(Msg::Clone)
         .on_delete(Msg::Delete);
     for &(id, pos) in nodes {
@@ -227,7 +225,7 @@ fn box_select_grabs_enclosed_nodes() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn drag_node_emits_move_with_new_position() {
+fn drag_node_emits_move_with_delta() {
     let start = Point::new(100.0, 100.0);
     let mut ui = Simulator::new(graph_with(&[(0, start)]));
     // Drag the body center by (+50, +20).
@@ -239,24 +237,24 @@ fn drag_node_emits_move_with_new_position() {
 
     let msgs = messages(ui);
     let moved = msgs.iter().find_map(|m| match m {
-        Msg::Move(id, pos) => Some((*id, *pos)),
+        Msg::Move(delta, ids) => Some((*delta, sorted(ids.clone()))),
         _ => None,
     });
-    let (id, pos) = moved.expect("dragging a node must emit Move");
-    assert_eq!(id, 0);
+    let (delta, ids) = moved.expect("dragging a node must emit Move");
+    assert_eq!(ids, vec![0]);
     assert!(
-        (pos.x - 150.0).abs() < 0.5 && (pos.y - 120.0).abs() < 0.5,
-        "node should move to (150, 120), got {pos:?}",
+        (delta.x - 50.0).abs() < 0.5 && (delta.y - 20.0).abs() < 0.5,
+        "node should move by (50, 20), got {delta:?}",
     );
 }
 
 #[test]
-fn group_move_emits_group_move_with_delta() {
+fn group_move_emits_move_with_delta_and_all_ids() {
     let mut ui = Simulator::new(graph_with(&[
         (0, Point::new(100.0, 100.0)),
         (1, Point::new(400.0, 100.0)),
     ]));
-    // Select both, then drag one of them: group move, not single move.
+    // Select both, then drag one of them: the move reports the whole group.
     ui.point_at(Point::new(500.0, 400.0));
     ui.simulate([key_pressed(keyboard::Key::Character("a".into()), cmd())]);
     let from = center(Point::new(100.0, 100.0));
@@ -264,19 +262,14 @@ fn group_move_emits_group_move_with_delta() {
 
     let msgs = messages(ui);
     let group = msgs.iter().find_map(|m| match m {
-        Msg::GroupMove(ids, delta) => Some((sorted(ids.clone()), *delta)),
+        Msg::Move(delta, ids) => Some((*delta, sorted(ids.clone()))),
         _ => None,
     });
-    let (ids, delta) = group.expect("dragging a multi-selection must emit GroupMove");
+    let (delta, ids) = group.expect("dragging a multi-selection must emit Move");
     assert_eq!(ids, vec![0, 1]);
     assert!(
         (delta.x - 30.0).abs() < 0.5 && (delta.y + 10.0).abs() < 0.5,
         "group delta should be (30, -10), got {delta:?}",
-    );
-    // No single-node Move should fire for a group drag.
-    assert!(
-        !msgs.iter().any(|m| matches!(m, Msg::Move(_, _))),
-        "group drag must not emit a single-node Move: {msgs:?}",
     );
 }
 
@@ -335,7 +328,7 @@ fn click_without_motion_does_not_emit_move() {
     click(&mut ui, center(Point::new(100.0, 100.0)));
     let msgs = messages(ui);
     assert!(
-        !msgs.iter().any(|m| matches!(m, Msg::Move(_, _))),
+        !msgs.iter().any(|m| matches!(m, Msg::Move(..))),
         "a click without motion must not emit Move: {msgs:?}",
     );
 }

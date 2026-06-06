@@ -95,18 +95,14 @@ enum Message {
         from: PinRef<usize, usize>,
         to: PinRef<usize, usize>,
     },
-    NodeMoved {
-        node_index: usize,
-        new_position: Point,
-    },
     EdgeDisconnected {
         from: PinRef<usize, usize>,
         to: PinRef<usize, usize>,
     },
     SelectionChanged(Vec<usize>),
-    GroupMoved {
-        indices: Vec<usize>,
+    NodesMoved {
         delta: Vector,
+        indices: Vec<usize>,
     },
     // Command palette messages
     ToggleCommandPalette,
@@ -264,14 +260,6 @@ impl Application {
                 }
                 self.recompile();
             }
-            Message::NodeMoved {
-                node_index,
-                new_position,
-            } => {
-                if let Some(node) = self.shader_graph.get_node_by_index_mut(node_index) {
-                    node.position = new_position;
-                }
-            }
             Message::EdgeDisconnected { from, to } => {
                 self.visual_edges.retain(|(f, t)| !(f == &from && t == &to));
                 self.shader_graph.connections.retain(|c| {
@@ -286,7 +274,7 @@ impl Application {
             Message::SelectionChanged(indices) => {
                 self.graph_selection = indices.into_iter().collect();
             }
-            Message::GroupMoved { indices, delta } => {
+            Message::NodesMoved { delta, indices } => {
                 for idx in indices {
                     if let Some(node) = self.shader_graph.get_node_by_index_mut(idx) {
                         node.position.x += delta.x;
@@ -386,13 +374,9 @@ impl Application {
         let mut graph: ::iced_nodegraph::NodeGraph<usize, usize, ::std::any::TypeId, _, _, _> =
             ::iced_nodegraph::NodeGraph::default()
                 .on_connect(|from, to| Message::EdgeConnected { from, to })
-                .on_move(|node_index: usize, new_position| Message::NodeMoved {
-                    node_index,
-                    new_position,
-                })
+                .on_move(|delta, indices| Message::NodesMoved { delta, indices })
                 .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
                 .on_select(Message::SelectionChanged)
-                .on_group_move(|indices, delta| Message::GroupMoved { indices, delta })
                 .on_camera_change(|position, zoom| Message::CameraChanged { position, zoom })
                 .selection(&self.graph_selection);
 

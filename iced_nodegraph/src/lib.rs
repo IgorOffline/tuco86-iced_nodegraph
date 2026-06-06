@@ -28,20 +28,20 @@
 //!
 //! ```rust,no_run
 //! use iced_nodegraph::{NodeGraph, PinRef, edge, node, node_graph};
-//! use iced::{Element, Theme, Point};
+//! use iced::{Element, Theme, Point, Vector};
 //! use iced::widget::text;
 //! use iced_wgpu::Renderer;
 //!
 //! #[derive(Debug, Clone)]
 //! enum Message {
 //!     EdgeConnected { from: PinRef<usize, usize>, to: PinRef<usize, usize> },
-//!     NodeMoved { node_id: usize, position: Point },
+//!     NodesMoved { delta: Vector, node_ids: Vec<usize> },
 //! }
 //!
 //! fn view(edges: &[(PinRef<usize, usize>, PinRef<usize, usize>)]) -> Element<'_, Message, Theme, Renderer> {
 //!     let mut ng = node_graph()
 //!         .on_connect(|from, to| Message::EdgeConnected { from, to })
-//!         .on_move(|node_id, position| Message::NodeMoved { node_id, position });
+//!         .on_move(|delta, node_ids| Message::NodesMoved { delta, node_ids });
 //!
 //!     // Add nodes with IDs
 //!     ng.push_node(node(0, Point::new(100.0, 100.0), text("Node A")));

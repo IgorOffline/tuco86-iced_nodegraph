@@ -108,8 +108,7 @@ impl Default for App {
 
 #[derive(Debug, Clone)]
 enum Message {
-    Moved { id: usize, position: Point },
-    GroupMoved { ids: Vec<usize>, delta: Vector },
+    Moved { delta: Vector, ids: Vec<usize> },
     Connected { from: Pin, to: Pin },
     Disconnected { from: Pin, to: Pin },
     Value(f32),
@@ -201,8 +200,7 @@ impl App {
 
     fn update(&mut self, message: Message) {
         match message {
-            Message::Moved { id, position } => self.positions[id] = position,
-            Message::GroupMoved { ids, delta } => {
+            Message::Moved { delta, ids } => {
                 for id in ids {
                     self.positions[id] += delta;
                 }
@@ -227,8 +225,7 @@ impl App {
         // cannot use the `node_graph()` helper (which fixes `UI = ()`).
         let mut ng: NodeGraph<usize, usize, Port, Message, Theme, iced::Renderer> =
             NodeGraph::default()
-                .on_move(|id, position| Message::Moved { id, position })
-                .on_group_move(|ids, delta| Message::GroupMoved { ids, delta })
+                .on_move(|delta, ids| Message::Moved { delta, ids })
                 .on_connect(|from, to| Message::Connected { from, to })
                 .on_disconnect(|from, to| Message::Disconnected { from, to })
                 // Authoritative: opposite directions and matching port type.

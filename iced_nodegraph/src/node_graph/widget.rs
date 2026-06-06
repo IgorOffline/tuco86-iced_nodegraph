@@ -1561,12 +1561,10 @@ where
                                 if let Some(cursor_position) = world_cursor.position() {
                                     let cursor_position = cursor_position.into_euclid();
                                     let offset = cursor_position - origin;
-                                    let new_position =
-                                        self.nodes[node_index].1 + offset.into_iced();
 
                                     // A press+release without motion is a click, not
-                                    // a move: don't emit a spurious NodeMoved (which
-                                    // would dirty host state / undo history on a plain
+                                    // a move: don't emit a spurious move (which would
+                                    // dirty host state / undo history on a plain
                                     // selection click). Only report an actual drag.
                                     let moved = offset.x.abs() > f32::EPSILON
                                         || offset.y.abs() > f32::EPSILON;
@@ -1577,7 +1575,10 @@ where
                                     {
                                         // Call on_move handler if set
                                         if let Some(handler) = self.on_move_handler() {
-                                            shell.publish(handler(node_id, new_position));
+                                            shell.publish(handler(
+                                                offset.into_iced(),
+                                                vec![node_id],
+                                            ));
                                         }
                                     }
                                 }
@@ -1826,8 +1827,8 @@ where
                                     // Translate internal indices to user IDs
                                     let node_ids = self.translate_node_ids(&indices);
                                     let delta = offset.into_iced();
-                                    if let Some(handler) = self.on_group_move_handler() {
-                                        shell.publish(handler(node_ids, delta));
+                                    if let Some(handler) = self.on_move_handler() {
+                                        shell.publish(handler(delta, node_ids));
                                     }
                                 }
                                 // Promote moved nodes to the top of the z-order.

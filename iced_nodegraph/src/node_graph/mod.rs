@@ -10,7 +10,7 @@
 //!
 //! let mut ng = node_graph()
 //!     .on_connect(|from, to| Message::Connected { from, to })
-//!     .on_move(|node_id, pos| Message::NodeMoved { node_id, pos });
+//!     .on_move(|delta, node_ids| Message::NodesMoved { delta, node_ids });
 //!
 //! ng.push_node(node(0, Point::new(100.0, 100.0), my_node_content));
 //! ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
@@ -25,7 +25,7 @@
 //! ## Event Handling
 //!
 //! Interaction is reported through individual callbacks: `on_connect()`,
-//! `on_move()`, `on_select()`, `on_clone()`, `on_delete()`, `on_group_move()`.
+//! `on_move()`, `on_select()`, `on_clone()`, `on_delete()`.
 //! Move and select work without the app keeping its own model; the app receives
 //! data on commit. Live drag callbacks (`on_drag_start/update/end`) additionally
 //! report an in-progress drag so it can be observed as it happens.
@@ -290,16 +290,15 @@ pub struct NodeGraph<
     graph_style: Option<GraphStyle>,
     on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
     on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
-    on_move: Option<Box<dyn Fn(N, Point) -> Message + 'a>>,
+    on_move: Option<Box<dyn Fn(Vector, Vec<N>) -> Message + 'a>>,
     on_select: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
     on_clone: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
     on_delete: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
-    on_group_move: Option<Box<dyn Fn(Vec<N>, Vector) -> Message + 'a>>,
     /// External selection using internal indices.
     /// Populated by `selection()` method which converts user IDs to indices.
     external_selection: Option<HashSet<usize>>,
     // Live drag callbacks: fire continuously during a drag (start/update/end),
-    // in addition to the commit-on-drop on_move/on_group_move. They make live
+    // in addition to the commit-on-drop on_move. They make live
     // observation of an in-progress drag possible (e.g. collaborative broadcast),
     // which is the app's concern, not the widget's.
     on_drag_start: Option<Box<dyn Fn(DragInfo) -> Message + 'a>>,
@@ -349,7 +348,6 @@ where
             on_select: None,
             on_clone: None,
             on_delete: None,
-            on_group_move: None,
             external_selection: None,
             on_drag_start: None,
             on_drag_update: None,
@@ -504,10 +502,13 @@ where
         self
     }
 
-    /// Sets a callback for when a node is moved to a new position.
+    /// Sets a callback for when one or more nodes are dragged to a new position.
     ///
-    /// The callback receives the node ID and its new position in world coordinates.
-    pub fn on_move(mut self, f: impl Fn(N, Point) -> Message + 'a) -> Self {
+    /// The callback receives the movement delta in world coordinates and the list
+    /// of moved node IDs. Dragging a single node reports that one node; dragging a
+    /// selection reports the whole group. In both cases the app applies the same
+    /// delta to every listed node.
+    pub fn on_move(mut self, f: impl Fn(Vector, Vec<N>) -> Message + 'a) -> Self {
         self.on_move = Some(Box::new(f));
         self
     }
@@ -536,15 +537,6 @@ where
     /// The application is responsible for removing the nodes from its data model.
     pub fn on_delete(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
         self.on_delete = Some(Box::new(f));
-        self
-    }
-
-    /// Sets a callback for when multiple selected nodes are moved together.
-    ///
-    /// The callback receives the list of moved node IDs and the movement delta vector.
-    /// This fires instead of individual `on_move` callbacks when dragging a selection.
-    pub fn on_group_move(mut self, f: impl Fn(Vec<N>, Vector) -> Message + 'a) -> Self {
-        self.on_group_move = Some(Box::new(f));
         self
     }
 
@@ -627,7 +619,7 @@ where
     ) -> Option<&Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>> {
         self.on_disconnect.as_ref()
     }
-    pub(super) fn on_move_handler(&self) -> Option<&Box<dyn Fn(N, Point) -> Message + 'a>> {
+    pub(super) fn on_move_handler(&self) -> Option<&Box<dyn Fn(Vector, Vec<N>) -> Message + 'a>> {
         self.on_move.as_ref()
     }
     pub(super) fn on_select_handler(&self) -> Option<&Box<dyn Fn(Vec<N>) -> Message + 'a>> {
@@ -638,11 +630,6 @@ where
     }
     pub(super) fn on_delete_handler(&self) -> Option<&Box<dyn Fn(Vec<N>) -> Message + 'a>> {
         self.on_delete.as_ref()
-    }
-    pub(super) fn on_group_move_handler(
-        &self,
-    ) -> Option<&Box<dyn Fn(Vec<N>, Vector) -> Message + 'a>> {
-        self.on_group_move.as_ref()
     }
     pub(super) fn on_drag_start_handler(&self) -> Option<&Box<dyn Fn(DragInfo) -> Message + 'a>> {
         self.on_drag_start.as_ref()

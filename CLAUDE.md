@@ -282,8 +282,7 @@ pub struct PinReference {
 pub enum NodeGraphEvent {
     EdgeConnected { from: PinReference, to: PinReference },
     EdgeDisconnected { from: PinReference, to: PinReference },
-    NodeMoved { node_id: usize, position: Point },
-    GroupMoved { node_ids: Vec<usize>, delta: Vector },
+    NodesMoved { delta: Vector, node_ids: Vec<usize> },
     SelectionChanged { selected: Vec<usize> },
     CloneRequested { node_ids: Vec<usize> },
     DeleteRequested { node_ids: Vec<usize> },
@@ -305,11 +304,10 @@ ng.push_edge_styled(from, to, EdgeStyle);
 // Event handlers (callbacks receive PinRef endpoints, not split node/pin ids)
 ng.on_connect(|from, to| Message)        // from, to: PinRef<N, P>
 ng.on_disconnect(|from, to| Message)
-ng.on_move(|node_id, position| Message)
+ng.on_move(|delta, node_ids| Message)    // delta: Vector, node_ids: Vec<N> (single or group)
 ng.on_select(|selected_ids| Message)     // selected_ids: Vec<N>
 ng.on_clone(|node_ids| Message)
 ng.on_delete(|node_ids| Message)
-ng.on_group_move(|node_ids, delta| Message)
 ng.can_connect(|from, to| bool)          // live snap validation during drag
 ng.selection(&selected_set)              // highlight + z-order selected nodes
 ```

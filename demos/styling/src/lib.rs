@@ -109,14 +109,10 @@ enum Message {
         from: PinRef<usize, usize>,
         to: PinRef<usize, usize>,
     },
-    NodeMoved {
-        node_index: usize,
-        new_position: Point,
-    },
     SelectionChanged(Vec<usize>),
-    GroupMoved {
-        indices: Vec<usize>,
+    NodesMoved {
         delta: Vector,
+        indices: Vec<usize>,
     },
 
     // Style controls
@@ -230,18 +226,10 @@ impl Application {
             Message::EdgeDisconnected { from, to } => {
                 self.edges.retain(|(f, t)| !(f == &from && t == &to));
             }
-            Message::NodeMoved {
-                node_index,
-                new_position,
-            } => {
-                if let Some((pos, _, _)) = self.nodes.get_mut(node_index) {
-                    *pos = new_position;
-                }
-            }
             Message::SelectionChanged(indices) => {
                 self.graph_selection = indices.into_iter().collect();
             }
-            Message::GroupMoved { indices, delta } => {
+            Message::NodesMoved { delta, indices } => {
                 for idx in indices {
                     if let Some((pos, _, _)) = self.nodes.get_mut(idx) {
                         pos.x += delta.x;
@@ -481,12 +469,8 @@ impl Application {
             ::iced_nodegraph::NodeGraph::default()
                 .on_connect(|from, to| Message::EdgeConnected { from, to })
                 .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
-                .on_move(|node_index, new_position| Message::NodeMoved {
-                    node_index,
-                    new_position,
-                })
+                .on_move(|delta, indices| Message::NodesMoved { delta, indices })
                 .on_select(Message::SelectionChanged)
-                .on_group_move(|indices, delta| Message::GroupMoved { indices, delta })
                 .selection(&self.graph_selection);
 
         for (index, (position, name, style)) in self.nodes.iter().enumerate() {

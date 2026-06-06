@@ -115,18 +115,14 @@ enum ApplicationMessage {
         from: PinRef<usize, usize>,
         to: PinRef<usize, usize>,
     },
-    NodeMoved {
-        node_index: usize,
-        new_position: Point,
-    },
     EdgeDisconnected {
         from: PinRef<usize, usize>,
         to: PinRef<usize, usize>,
     },
     SelectionChanged(Vec<usize>),
-    GroupMoved {
-        indices: Vec<usize>,
+    NodesMoved {
         delta: Vector,
+        indices: Vec<usize>,
     },
     Tick,
     ToggleDebugEdges,
@@ -167,21 +163,13 @@ impl Application {
             ApplicationMessage::EdgeConnected { from, to } => {
                 self.edges.push((from, to));
             }
-            ApplicationMessage::NodeMoved {
-                node_index,
-                new_position,
-            } => {
-                if let Some((position, _)) = self.nodes.get_mut(node_index) {
-                    *position = new_position;
-                }
-            }
             ApplicationMessage::EdgeDisconnected { from, to } => {
                 self.edges.retain(|(f, t)| !(f == &from && t == &to));
             }
             ApplicationMessage::SelectionChanged(indices) => {
                 self.selected_nodes = indices.into_iter().collect();
             }
-            ApplicationMessage::GroupMoved { indices, delta } => {
+            ApplicationMessage::NodesMoved { delta, indices } => {
                 for idx in indices {
                     if let Some((pos, _)) = self.nodes.get_mut(idx) {
                         pos.x += delta.x;
@@ -212,12 +200,8 @@ impl Application {
             ::iced_nodegraph::NodeGraph::default()
                 .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
                 .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })
-                .on_move(|node_index, new_position| ApplicationMessage::NodeMoved {
-                    node_index,
-                    new_position,
-                })
+                .on_move(|delta, indices| ApplicationMessage::NodesMoved { delta, indices })
                 .on_select(ApplicationMessage::SelectionChanged)
-                .on_group_move(|indices, delta| ApplicationMessage::GroupMoved { indices, delta })
                 .selection(&self.selected_nodes)
                 .sdf_debug(self.sdf_debug);
 
