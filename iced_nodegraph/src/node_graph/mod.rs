@@ -43,7 +43,7 @@ use std::hash::Hash;
 
 use iced::{Length, Point, Size, Vector};
 
-use crate::ids::{EdgeId, IdMap, NodeId, PinId};
+use crate::ids::{EdgeId, NodeId, PinId};
 use crate::node_pin::{PinEnd, PinInfo};
 use crate::style::{EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus, PinStyle};
 
@@ -271,6 +271,7 @@ pub struct NodeGraph<
     /// Config fields set to Some() override theme defaults.
     /// None fields use `default_node_style()` values at render time.
     pub(super) nodes: Vec<(
+        N,
         Point,
         iced::Element<'a, Message, Theme, Renderer>,
         Option<NodeStyleFn<'a, Theme>>,
@@ -286,8 +287,6 @@ pub struct NodeGraph<
         PinRef<N, P>,
         Option<EdgeStyleFn<'a, P, UI, Theme>>,
     )>,
-    /// Maps user node IDs to internal indices for translation at render/event time.
-    pub(super) node_ids: IdMap<N>,
     graph_style: Option<GraphStyle>,
     on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
     on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
@@ -343,7 +342,6 @@ where
             size: Size::new(Length::Fill, Length::Fill),
             nodes: Vec::new(),
             edges: Vec::new(),
-            node_ids: IdMap::new(),
             graph_style: None,
             on_connect: None,
             on_disconnect: None,
@@ -387,8 +385,8 @@ where
     ///
     /// The node will use theme defaults from `default_node_style()`.
     pub fn push_node(&mut self, node: Node<'a, N, P, UI, Message, Theme, Renderer>) {
-        self.node_ids.register(node.id);
         self.nodes.push((
+            node.id,
             node.position,
             node.element,
             node.style_fn,
@@ -406,9 +404,20 @@ where
             .push((edge.id, edge.from, edge.to, edge.style_fn));
     }
 
-    /// Translates internal node index to user's node ID.
+    /// The user node id stored at an internal index.
+    pub(super) fn node_id_at(&self, index: usize) -> Option<&N> {
+        self.nodes.get(index).map(|(id, ..)| id)
+    }
+
+    /// Clones the user node id stored at an internal index.
     pub(super) fn index_to_node_id(&self, index: usize) -> Option<N> {
-        self.node_ids.id(index).cloned()
+        self.node_id_at(index).cloned()
+    }
+
+    /// The internal index of a node by its user id. Linear scan: the node Vec is
+    /// the single source of truth, the index is a transient render-time detail.
+    pub(super) fn node_index(&self, id: &N) -> Option<usize> {
+        self.nodes.iter().position(|(n, ..)| n == id)
     }
 
     pub fn graph_style(mut self, style: GraphStyle) -> Self {
@@ -578,7 +587,7 @@ where
     {
         let indices: HashSet<usize> = selection
             .into_iter()
-            .filter_map(|id| self.node_ids.index(id))
+            .filter_map(|id| self.node_index(id))
             .collect();
         self.external_selection = Some(indices);
         self
@@ -599,13 +608,13 @@ where
     pub(super) fn elements_iter(
         &self,
     ) -> impl Iterator<Item = (Point, &iced::Element<'a, Message, Theme, Renderer>)> {
-        self.nodes.iter().map(|(p, e, _, _)| (*p, e))
+        self.nodes.iter().map(|(_, p, e, _, _)| (*p, e))
     }
 
     pub(super) fn elements_iter_mut(
         &mut self,
     ) -> impl Iterator<Item = (Point, &mut iced::Element<'a, Message, Theme, Renderer>)> {
-        self.nodes.iter_mut().map(|(p, e, _, _)| (*p, e))
+        self.nodes.iter_mut().map(|(_, p, e, _, _)| (*p, e))
     }
 
     pub(super) fn on_connect_handler(
@@ -659,7 +668,7 @@ where
     pub(super) fn translate_node_ids(&self, indices: &[usize]) -> Vec<N> {
         indices
             .iter()
-            .filter_map(|&idx| self.node_ids.id(idx).cloned())
+            .filter_map(|&idx| self.index_to_node_id(idx))
             .collect()
     }
 }

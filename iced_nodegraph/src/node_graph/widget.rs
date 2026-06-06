@@ -519,10 +519,10 @@ where
             let mut batch = SdfPrimitive::with_capacity(self.edges.len() * 4);
 
             for (edge_idx, (_edge_id, from, to, edge_style_fn)) in self.edges.iter().enumerate() {
-                let Some(from_node_idx) = self.node_ids.index(&from.node_id) else {
+                let Some(from_node_idx) = self.node_index(&from.node_id) else {
                     continue;
                 };
-                let Some(to_node_idx) = self.node_ids.index(&to.node_id) else {
+                let Some(to_node_idx) = self.node_index(&to.node_id) else {
                     continue;
                 };
                 let Some(from_node_tree) = tree.children.get(from_node_idx) else {
@@ -705,7 +705,8 @@ where
         }
         let node_geoms: Vec<Option<NodeGeom>> = (0..self.nodes.len())
             .map(|node_index| {
-                let (_position, _element, node_style, node_pin_style) = &self.nodes[node_index];
+                let (_id, _position, _element, node_style, node_pin_style) =
+                    &self.nodes[node_index];
                 let node_layout = layout.children().nth(node_index)?;
                 let node_tree = tree.children.get(node_index)?;
                 let status = if state.selected_nodes.contains(&node_index) {
@@ -798,7 +799,7 @@ where
         // For each node: Fill → Widgets → Foreground (border + pins batched)
         // ========================================
         for &node_index in &z_indices {
-            let (_position, element, _node_style, node_pin_style) = &self.nodes[node_index];
+            let (_id, _position, element, _node_style, node_pin_style) = &self.nodes[node_index];
             let Some(node_tree) = tree.children.get(node_index) else {
                 continue;
             };
@@ -1411,15 +1412,15 @@ where
                                         {
                                             // Resolve user IDs to indices
                                             let from_node_idx =
-                                                match self.node_ids.index(&from_ref.node_id) {
+                                                match self.node_index(&from_ref.node_id) {
                                                     Some(idx) => idx,
                                                     None => continue,
                                                 };
-                                            let to_node_idx =
-                                                match self.node_ids.index(&to_ref.node_id) {
-                                                    Some(idx) => idx,
-                                                    None => continue,
-                                                };
+                                            let to_node_idx = match self.node_index(&to_ref.node_id)
+                                            {
+                                                Some(idx) => idx,
+                                                None => continue,
+                                            };
 
                                             // Get pin positions and sides for bezier calculation
                                             let from_pin_data = layout
@@ -1561,7 +1562,7 @@ where
                                     let cursor_position = cursor_position.into_euclid();
                                     let offset = cursor_position - origin;
                                     let new_position =
-                                        self.nodes[node_index].0 + offset.into_iced();
+                                        self.nodes[node_index].1 + offset.into_iced();
 
                                     // A press+release without motion is a click, not
                                     // a move: don't emit a spurious NodeMoved (which
@@ -1857,7 +1858,7 @@ where
                     // children itself takes the event.
                     let pre_captured = shell.is_event_captured();
                     for &node_index in z_indices.iter().rev() {
-                        let Some((_pos, element, _style, _)) = self.nodes.get_mut(node_index)
+                        let Some((_id, _pos, element, _style, _)) = self.nodes.get_mut(node_index)
                         else {
                             continue;
                         };
@@ -1923,12 +1924,11 @@ where
                                 // Check if click is near any edge
                                 for (_id, from_ref, to_ref, _style) in &self.edges {
                                     // Resolve user IDs to indices
-                                    let from_node_idx = match self.node_ids.index(&from_ref.node_id)
-                                    {
+                                    let from_node_idx = match self.node_index(&from_ref.node_id) {
                                         Some(idx) => idx,
                                         None => continue,
                                     };
-                                    let to_node_idx = match self.node_ids.index(&to_ref.node_id) {
+                                    let to_node_idx = match self.node_index(&to_ref.node_id) {
                                         Some(idx) => idx,
                                         None => continue,
                                     };
@@ -2007,11 +2007,10 @@ where
                                     };
                                     let pins = find_pins::<P, UI>(node_tree, node_layout);
                                     // Get node_id for this node_index
-                                    let current_node_id =
-                                        match self.node_ids.id(node_index).cloned() {
-                                            Some(id) => id,
-                                            None => continue,
-                                        };
+                                    let current_node_id = match self.index_to_node_id(node_index) {
+                                        Some(id) => id,
+                                        None => continue,
+                                    };
 
                                     for (pin_index, pin_state, (a, b)) in pins {
                                         // Pin positions from layout are ALREADY in world space
@@ -2039,13 +2038,11 @@ where
                                                     // leaves the grabbed pin by more than
                                                     // UNSNAP_THRESHOLD.
                                                     // Resolve to_ref to indices for internal Dragging state
-                                                    let to_node_idx = match self
-                                                        .node_ids
-                                                        .index(&to_ref.node_id)
-                                                    {
-                                                        Some(idx) => idx,
-                                                        None => continue,
-                                                    };
+                                                    let to_node_idx =
+                                                        match self.node_index(&to_ref.node_id) {
+                                                            Some(idx) => idx,
+                                                            None => continue,
+                                                        };
                                                     let to_pin_idx = {
                                                         let to_tree =
                                                             match tree.children.get(to_node_idx) {
@@ -2103,13 +2100,11 @@ where
                                                     // leaves the grabbed pin by more than
                                                     // UNSNAP_THRESHOLD.
                                                     // Resolve from_ref to indices for internal Dragging state
-                                                    let from_node_idx = match self
-                                                        .node_ids
-                                                        .index(&from_ref.node_id)
-                                                    {
-                                                        Some(idx) => idx,
-                                                        None => continue,
-                                                    };
+                                                    let from_node_idx =
+                                                        match self.node_index(&from_ref.node_id) {
+                                                            Some(idx) => idx,
+                                                            None => continue,
+                                                        };
                                                     let from_pin_idx = {
                                                         let from_tree = match tree
                                                             .children
@@ -2461,7 +2456,7 @@ where
     };
 
     // Source node id, only needed when can_connect is set.
-    let from_node_id = graph.node_ids.id(from_node).cloned();
+    let from_node_id = graph.node_id_at(from_node);
 
     // Iterate all pins in all nodes
     for (node_index, (node_layout, node_tree)) in layout.children().zip(&tree.children).enumerate()
@@ -2479,8 +2474,7 @@ where
 
             if let Some(can_connect) = &graph.can_connect {
                 // Authoritative: the user closure decides, no implicit filter.
-                let (Some(fid), Some(tid)) = (from_node_id.as_ref(), graph.node_ids.id(node_index))
-                else {
+                let (Some(fid), Some(tid)) = (from_node_id, graph.node_id_at(node_index)) else {
                     continue;
                 };
                 let from_end = PinEnd::new(
