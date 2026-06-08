@@ -63,7 +63,7 @@ use nodes::{
     Vec2Node, apply_to_graph_node, apply_to_node_node, bool_toggle_node, color_picker_node,
     color_preset_node, color_quad_node, edge_config_node, edge_curve_selector_node,
     float_slider_node, int_slider_node, math_node, node, node_config_node,
-    pattern_type_selector_node, pin_config_node, pin_shape_selector_node, vec2_node,
+    pattern_type_selector_node, pin_config_node, pin_shape_selector_node, theme_node, vec2_node,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use persistence::EdgeData;
@@ -623,6 +623,9 @@ impl Application {
                     NodeType::Vec2(state) => {
                         output.push_str(&format!("  Type: Vec2({:?})\n", state));
                     }
+                    NodeType::Theme => {
+                        output.push_str("  Type: Theme\n");
+                    }
                 }
                 output.push('\n');
             }
@@ -730,6 +733,19 @@ impl Application {
     }
 
     /// Propagates values from input nodes to connected config nodes
+    /// The value a node emits on a given output pin. For most nodes this is the
+    /// pin-agnostic `output_value()`; the Theme node resolves per-pin colors from
+    /// the current theme.
+    fn pin_output_value(&self, node_id: &NodeId, pin: &PinLabel) -> Option<NodeValue> {
+        match self.nodes.get(node_id) {
+            Some((_, NodeType::Theme)) => {
+                theme_color(&self.current_theme, pin).map(NodeValue::Color)
+            }
+            Some((_, node_type)) => node_type.output_value(),
+            None => None,
+        }
+    }
+
     fn propagate_values(&mut self) {
         let mut new_computed = ComputedStyle::default();
         self.pending_configs.clear();
@@ -780,11 +796,9 @@ impl Application {
 
             for edge in &edges_snapshot {
                 // Feed the target's combiner inputs (Math/ColorQuad/Vec2) from the
-                // source's output, in both edge directions (edges connect either way).
-                let forward = self
-                    .nodes
-                    .get(&edge.from_node)
-                    .and_then(|(_, t)| t.output_value());
+                // source's output, in both edge directions (edges connect either
+                // way). `pin_output_value` resolves Theme node colors per pin.
+                let forward = self.pin_output_value(&edge.from_node, &edge.from_pin);
                 if let Some(value) = forward
                     && let Some((_, node)) = self.nodes.get_mut(&edge.to_node)
                     && feed_combiner_input(node, &edge.to_pin, &value)
@@ -792,10 +806,7 @@ impl Application {
                     changed = true;
                 }
 
-                let reverse = self
-                    .nodes
-                    .get(&edge.to_node)
-                    .and_then(|(_, t)| t.output_value());
+                let reverse = self.pin_output_value(&edge.to_node, &edge.to_pin);
                 if let Some(value) = reverse
                     && let Some((_, node)) = self.nodes.get_mut(&edge.from_node)
                     && feed_combiner_input(node, &edge.from_pin, &value)
@@ -854,6 +865,26 @@ impl Application {
                     && let Some(value) = to_type.output_value()
                 {
                     self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
+                }
+                // Handle Theme → Config connections (per-pin palette color)
+                if let (NodeType::Theme, NodeType::Config(_)) = (&from_type, &to_type)
+                    && let Some(color) = theme_color(&self.current_theme, &edge.from_pin)
+                {
+                    self.apply_value_to_config_node(
+                        &edge.to_node,
+                        &edge.to_pin,
+                        &NodeValue::Color(color),
+                    );
+                }
+                // Handle Config → Theme connections (reverse direction)
+                if let (NodeType::Config(_), NodeType::Theme) = (&from_type, &to_type)
+                    && let Some(color) = theme_color(&self.current_theme, &edge.to_pin)
+                {
+                    self.apply_value_to_config_node(
+                        &edge.from_node,
+                        &edge.from_pin,
+                        &NodeValue::Color(color),
+                    );
                 }
             }
         }
@@ -1293,6 +1324,9 @@ impl Application {
                                 self.palette_original_theme = None;
                                 self.command_palette_open = false;
                                 self.palette_view = PaletteView::Main;
+                                // Theme nodes feed palette colors into configs;
+                                // recompute so styling follows the new theme.
+                                self.propagate_values();
                                 self.save_state();
                                 Task::none()
                             }
@@ -1367,6 +1401,9 @@ impl Application {
                 self.command_palette_open = false;
                 self.command_input.clear();
                 self.palette_view = PaletteView::Main;
+                // Theme nodes feed palette colors into configs; recompute so
+                // styling follows the new theme.
+                self.propagate_values();
                 self.save_state();
                 Task::none()
             }
@@ -1930,6 +1967,7 @@ impl Application {
                 NodeType::Math(state) => math_node(theme, state),
                 NodeType::ColorQuad(state) => color_quad_node(theme, state),
                 NodeType::Vec2(state) => vec2_node(theme, state),
+                NodeType::Theme => theme_node(theme),
             };
 
             // Apply the computed node-config overlay to every node ("Apply to
@@ -2153,6 +2191,11 @@ impl Application {
                                 value: PatternType::Solid,
                             }),
                         }),
+                    command("theme", "Theme")
+                        .description("Active theme's palette as color outputs")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Theme,
+                        }),
                 ];
                 ("Input Nodes", commands)
             }
@@ -2265,6 +2308,39 @@ impl Application {
             }),
         ])
     }
+}
+
+/// Resolves a Theme node output pin to a color from the theme's extended palette.
+/// Returns None for unknown pins.
+fn theme_color(theme: &Theme, pin: &PinLabel) -> Option<iced::Color> {
+    use nodes::pins::theme as t;
+    let p = theme.extended_palette();
+    let color = if *pin == t::BACKGROUND {
+        p.background.base.color
+    } else if *pin == t::BACKGROUND_WEAK {
+        p.background.weak.color
+    } else if *pin == t::BACKGROUND_STRONG {
+        p.background.strong.color
+    } else if *pin == t::TEXT {
+        p.background.base.text
+    } else if *pin == t::PRIMARY {
+        p.primary.base.color
+    } else if *pin == t::PRIMARY_WEAK {
+        p.primary.weak.color
+    } else if *pin == t::PRIMARY_STRONG {
+        p.primary.strong.color
+    } else if *pin == t::SECONDARY {
+        p.secondary.base.color
+    } else if *pin == t::SUCCESS {
+        p.success.base.color
+    } else if *pin == t::WARNING {
+        p.warning.base.color
+    } else if *pin == t::DANGER {
+        p.danger.base.color
+    } else {
+        return None;
+    };
+    Some(color)
 }
 
 /// Feeds a propagated `value` into a combiner node's input pin (Math, ColorQuad,
@@ -2705,6 +2781,71 @@ mod tests {
             node.shadow_offset,
             Some((5.0, 7.0)),
             "shadow offset (via Vec2 builder) did not propagate",
+        );
+    }
+
+    #[test]
+    fn test_theme_node_feeds_config() {
+        // Theme.primary -> NodeConfig.fill_color -> ApplyToGraph. The computed
+        // node style must carry the active theme's primary color.
+        let mut app = Application::default();
+        app.nodes.clear();
+        app.node_order.clear();
+        app.edges.clear();
+        app.edge_order.clear();
+
+        let p = Point::new(0.0, 0.0);
+        let theme = generate_node_id();
+        let cfg = generate_node_id();
+        let apply = generate_node_id();
+        app.nodes.insert(theme.clone(), (p, NodeType::Theme));
+        app.nodes.insert(
+            cfg.clone(),
+            (
+                p,
+                NodeType::Config(ConfigNodeType::NodeConfig(NodeConfigInputs::default())),
+            ),
+        );
+        app.nodes.insert(
+            apply.clone(),
+            (
+                p,
+                NodeType::Config(ConfigNodeType::ApplyToGraph {
+                    has_node_config: false,
+                    has_edge_config: false,
+                    has_pin_config: false,
+                }),
+            ),
+        );
+
+        use nodes::pins;
+        let mut edge = |from: NodeId, fp: PinLabel, to: NodeId, tp: PinLabel| {
+            let e = generate_edge_id();
+            app.edges.insert(
+                e.clone(),
+                EdgeData {
+                    from_node: from,
+                    from_pin: fp,
+                    to_node: to,
+                    to_pin: tp,
+                },
+            );
+            app.edge_order.push(e);
+        };
+        edge(
+            theme,
+            pins::theme::PRIMARY,
+            cfg.clone(),
+            pins::node::FILL_COLOR,
+        );
+        edge(cfg, pins::cfg::NODE_OUT, apply, pins::cfg::NODE_CONFIG);
+
+        let expected = app.current_theme.extended_palette().primary.base.color;
+        app.propagate_values();
+        assert_eq!(
+            app.computed_style.node.fill_color.map(|q| q.near_start),
+            Some(expected),
+            "theme primary color did not propagate to the node config",
         );
     }
 

@@ -315,6 +315,42 @@ pub mod build {
     pub const VEC2_OUT: &str = "vec2";
 }
 
+/// Output pins of the Theme node: the active theme's extended palette as colors.
+pub mod theme {
+    /// Base background color
+    pub const BACKGROUND: &str = "background";
+
+    /// Weaker background variant
+    pub const BACKGROUND_WEAK: &str = "background_weak";
+
+    /// Stronger background variant
+    pub const BACKGROUND_STRONG: &str = "background_strong";
+
+    /// Default text color (paired with the base background)
+    pub const TEXT: &str = "text";
+
+    /// Base primary color
+    pub const PRIMARY: &str = "primary";
+
+    /// Weaker primary variant
+    pub const PRIMARY_WEAK: &str = "primary_weak";
+
+    /// Stronger primary variant
+    pub const PRIMARY_STRONG: &str = "primary_strong";
+
+    /// Base secondary color
+    pub const SECONDARY: &str = "secondary";
+
+    /// Base success color
+    pub const SUCCESS: &str = "success";
+
+    /// Base warning color
+    pub const WARNING: &str = "warning";
+
+    /// Base danger color
+    pub const DANGER: &str = "danger";
+}
+
 /// Pin labels for math nodes.
 pub mod math {
     /// First input operand

@@ -177,6 +177,7 @@ pub enum SavedNodeType {
     },
     ColorQuad,
     Vec2,
+    Theme,
 }
 
 /// Saved edge connection with stable IDs.
@@ -269,6 +270,18 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         s if s == edge::BORDER_BACKGROUND => edge::BORDER_BACKGROUND,
         s if s == edge::SHADOW_BLUR => edge::SHADOW_BLUR,
         s if s == edge::SHADOW_EXPAND => edge::SHADOW_EXPAND,
+        // Theme node output pins
+        s if s == theme::BACKGROUND => theme::BACKGROUND,
+        s if s == theme::BACKGROUND_WEAK => theme::BACKGROUND_WEAK,
+        s if s == theme::BACKGROUND_STRONG => theme::BACKGROUND_STRONG,
+        s if s == theme::TEXT => theme::TEXT,
+        s if s == theme::PRIMARY => theme::PRIMARY,
+        s if s == theme::PRIMARY_WEAK => theme::PRIMARY_WEAK,
+        s if s == theme::PRIMARY_STRONG => theme::PRIMARY_STRONG,
+        s if s == theme::SECONDARY => theme::SECONDARY,
+        s if s == theme::SUCCESS => theme::SUCCESS,
+        s if s == theme::WARNING => theme::WARNING,
+        s if s == theme::DANGER => theme::DANGER,
         // Builder node pins
         s if s == build::NEAR_START => build::NEAR_START,
         s if s == build::NEAR_END => build::NEAR_END,
@@ -482,6 +495,7 @@ impl SavedNodeType {
             },
             NodeType::ColorQuad(_) => SavedNodeType::ColorQuad,
             NodeType::Vec2(_) => SavedNodeType::Vec2,
+            NodeType::Theme => SavedNodeType::Theme,
         }
     }
 
@@ -574,6 +588,7 @@ impl SavedNodeType {
             }
             SavedNodeType::ColorQuad => NodeType::ColorQuad(ColorQuadNode::default()),
             SavedNodeType::Vec2 => NodeType::Vec2(Vec2Node::default()),
+            SavedNodeType::Theme => NodeType::Theme,
         }
     }
 }

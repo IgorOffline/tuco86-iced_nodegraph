@@ -13,6 +13,7 @@ mod float_slider;
 mod int_slider;
 mod math;
 pub mod pins;
+mod theme_node;
 
 pub use bool_toggle::{BoolToggleConfig, bool_toggle_node};
 pub use calendar::calendar_node;
@@ -32,6 +33,7 @@ pub use filter::filter_node;
 pub use float_slider::{FloatSliderConfig, float_slider_node};
 pub use int_slider::{IntSliderConfig, int_slider_node};
 pub use math::math_node;
+pub use theme_node::theme_node;
 
 use demo_common::NodeContentStyle;
 use iced::{
@@ -407,6 +409,8 @@ pub enum NodeType {
     ColorQuad(ColorQuadNode),
     /// Combines two scalars into a 2D vector
     Vec2(Vec2Node),
+    /// Outputs the active theme's extended palette as color pins
+    Theme,
 }
 
 #[allow(dead_code)]
@@ -434,6 +438,7 @@ impl NodeType {
             Self::Math(state) => state.operation.name(),
             Self::ColorQuad(_) => "Color Quad",
             Self::Vec2(_) => "Vec2",
+            Self::Theme => "Theme",
         }
     }
 
@@ -447,7 +452,9 @@ impl NodeType {
                 let (x, y) = state.vec2();
                 Some(NodeValue::Vec2(x, y))
             }
-            Self::Workflow(_) | Self::Config(_) => None,
+            // The Theme node's outputs are per-pin and theme-dependent; they are
+            // resolved during propagation, not via this pin-agnostic method.
+            Self::Workflow(_) | Self::Config(_) | Self::Theme => None,
         }
     }
 }
