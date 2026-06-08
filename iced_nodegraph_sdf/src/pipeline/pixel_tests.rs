@@ -1241,22 +1241,7 @@ fn bezier_stroke_edge_is_smooth() {
     // Use the actual edge editor bezier (longer, endpoints further from view center)
     let bezier = Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0]);
     let thickness = 6.0_f32;
-    let stroke = Style::arc_gradient_stroke(
-        iced::Color::from_rgba(0.2, 0.85, 1.0, 1.0),
-        iced::Color::from_rgba(0.6, 0.2, 1.0, 1.0),
-        Pattern::solid(thickness),
-    );
-    let outline_total = thickness + 1.2 * 2.0;
-    let outline = Style::stroke(
-        iced::Color::from_rgba(0.05, 0.05, 0.15, 1.0),
-        Pattern::solid(outline_total),
-    );
     let border_total = thickness + 2.0 * 2.0 + 3.0 * 2.0;
-    let border = Style::arc_gradient_stroke(
-        iced::Color::from_rgba(0.95, 0.75, 0.2, 1.0),
-        iced::Color::from_rgba(1.0, 0.3, 0.2, 1.0),
-        Pattern::solid(border_total),
-    );
     // Test with flat color (no gradient) vs gradient to isolate arc-length cause
     let flat_border = Style::stroke(
         iced::Color::from_rgba(0.95, 0.75, 0.2, 1.0),
@@ -1342,7 +1327,6 @@ fn bezier_closest_point_smooth_cpu() {
     // Scan along the outer edge of a 16-wide border at zoom
     let half_t = 8.0f32;
     let cam_x = 800.0 * 0.5 / zoom;
-    let cam_y = 500.0 * 0.5 / zoom;
 
     let mut edge_y_positions = Vec::new();
     for px_x in 200..600u32 {
