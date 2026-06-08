@@ -1923,6 +1923,11 @@ where
                             // Track left mouse button state for Fruit Ninja edge cutting
                             state.left_mouse_down = true;
 
+                            // Shift+drag from an occupied pin forks a NEW edge instead
+                            // of unplugging the existing one. Captured here while `state`
+                            // is still borrowable, before the pin hit-test reborrows tree.
+                            let shift_held = state.modifiers.shift();
+
                             // Ctrl+Click: Edge cut tool
                             if state.modifiers.command()
                                 && let Some(cursor_position) = world_cursor.position()
@@ -2028,140 +2033,157 @@ where
                                         if distance < PIN_CLICK_THRESHOLD
                                             && !pin_state.interactions_disabled
                                         {
-                                            // Check if this pin has existing connections
-                                            // If it does, "unplug" the clicked end (like pulling a cable)
-                                            for (_id, from_ref, to_ref, _style) in &self.edges {
-                                                // If we clicked the "from" pin, unplug FROM and drag it
-                                                // Keep TO pin connected, drag away from it
-                                                if from_ref.node_id == current_node_id
-                                                    && from_ref.pin_id == pin_state.pin_id
-                                                {
-                                                    // Magnetic plug: grabbing a connected pin
-                                                    // does NOT disconnect yet. Enter the snapped
-                                                    // EdgeOver state anchored at the OTHER (TO)
-                                                    // end; the hysteresis in the EdgeOver handler
-                                                    // fires on_disconnect only once the cursor
-                                                    // leaves the grabbed pin by more than
-                                                    // UNSNAP_THRESHOLD.
-                                                    // Resolve to_ref to indices for internal Dragging state
-                                                    let to_node_idx =
-                                                        match self.node_index(&to_ref.node_id) {
+                                            // Check if this pin has existing connections.
+                                            // Without shift, "unplug" the clicked end (like
+                                            // pulling a cable). With shift held, skip the
+                                            // unplug entirely and fall through to start a
+                                            // fresh edge, leaving existing connections intact.
+                                            if !shift_held {
+                                                for (_id, from_ref, to_ref, _style) in &self.edges {
+                                                    // If we clicked the "from" pin, unplug FROM and drag it
+                                                    // Keep TO pin connected, drag away from it
+                                                    if from_ref.node_id == current_node_id
+                                                        && from_ref.pin_id == pin_state.pin_id
+                                                    {
+                                                        // Magnetic plug: grabbing a connected pin
+                                                        // does NOT disconnect yet. Enter the snapped
+                                                        // EdgeOver state anchored at the OTHER (TO)
+                                                        // end; the hysteresis in the EdgeOver handler
+                                                        // fires on_disconnect only once the cursor
+                                                        // leaves the grabbed pin by more than
+                                                        // UNSNAP_THRESHOLD.
+                                                        // Resolve to_ref to indices for internal Dragging state
+                                                        let to_node_idx = match self
+                                                            .node_index(&to_ref.node_id)
+                                                        {
                                                             Some(idx) => idx,
                                                             None => continue,
                                                         };
-                                                    let to_pin_idx = {
-                                                        let to_tree =
-                                                            match tree.children.get(to_node_idx) {
+                                                        let to_pin_idx = {
+                                                            let to_tree = match tree
+                                                                .children
+                                                                .get(to_node_idx)
+                                                            {
                                                                 Some(t) => t,
                                                                 None => continue,
                                                             };
-                                                        let to_layout = match layout
-                                                            .children()
-                                                            .nth(to_node_idx)
-                                                        {
-                                                            Some(l) => l,
-                                                            None => continue,
+                                                            let to_layout = match layout
+                                                                .children()
+                                                                .nth(to_node_idx)
+                                                            {
+                                                                Some(l) => l,
+                                                                None => continue,
+                                                            };
+                                                            let to_pins = find_pins::<P, UI>(
+                                                                to_tree, to_layout,
+                                                            );
+                                                            match to_pins.iter().position(
+                                                                |(_, s, _)| {
+                                                                    s.pin_id == to_ref.pin_id
+                                                                },
+                                                            ) {
+                                                                Some(idx) => idx,
+                                                                None => continue,
+                                                            }
                                                         };
-                                                        let to_pins =
-                                                            find_pins::<P, UI>(to_tree, to_layout);
-                                                        match to_pins.iter().position(
-                                                            |(_, s, _)| s.pin_id == to_ref.pin_id,
-                                                        ) {
-                                                            Some(idx) => idx,
-                                                            None => continue,
-                                                        }
-                                                    };
-                                                    // Compute valid targets for the new drag
-                                                    let valid_targets = compute_valid_targets(
-                                                        self,
-                                                        tree,
-                                                        layout,
-                                                        to_node_idx,
-                                                        to_pin_idx,
-                                                    );
-                                                    let state =
-                                                        tree.state.downcast_mut::<NodeGraphState>();
-                                                    state.valid_drop_targets = valid_targets;
-                                                    // Anchor at the TO pin, hold the grabbed
-                                                    // FROM pin snapped (still connected).
-                                                    state.dragging = Dragging::EdgeOver(
-                                                        to_node_idx,
-                                                        to_pin_idx,
-                                                        node_index,
-                                                        pin_index,
-                                                    );
-                                                    shell.capture_event();
-                                                    return;
-                                                }
-                                                // If we clicked the "to" pin, unplug TO and drag it
-                                                // Keep FROM pin connected, drag away from it
-                                                else if to_ref.node_id == current_node_id
-                                                    && to_ref.pin_id == pin_state.pin_id
-                                                {
-                                                    // Magnetic plug: grabbing a connected pin
-                                                    // does NOT disconnect yet. Enter the snapped
-                                                    // EdgeOver state anchored at the OTHER (FROM)
-                                                    // end; the hysteresis in the EdgeOver handler
-                                                    // fires on_disconnect only once the cursor
-                                                    // leaves the grabbed pin by more than
-                                                    // UNSNAP_THRESHOLD.
-                                                    // Resolve from_ref to indices for internal Dragging state
-                                                    let from_node_idx =
-                                                        match self.node_index(&from_ref.node_id) {
-                                                            Some(idx) => idx,
-                                                            None => continue,
-                                                        };
-                                                    let from_pin_idx = {
-                                                        let from_tree = match tree
-                                                            .children
-                                                            .get(from_node_idx)
-                                                        {
-                                                            Some(t) => t,
-                                                            None => continue,
-                                                        };
-                                                        let from_layout = match layout
-                                                            .children()
-                                                            .nth(from_node_idx)
-                                                        {
-                                                            Some(l) => l,
-                                                            None => continue,
-                                                        };
-                                                        let from_pins = find_pins::<P, UI>(
-                                                            from_tree,
-                                                            from_layout,
+                                                        // Compute valid targets for the new drag
+                                                        let valid_targets = compute_valid_targets(
+                                                            self,
+                                                            tree,
+                                                            layout,
+                                                            to_node_idx,
+                                                            to_pin_idx,
                                                         );
-                                                        match from_pins.iter().position(
-                                                            |(_, s, _)| s.pin_id == from_ref.pin_id,
-                                                        ) {
+                                                        let state = tree
+                                                            .state
+                                                            .downcast_mut::<NodeGraphState>();
+                                                        state.valid_drop_targets = valid_targets;
+                                                        // Anchor at the TO pin, hold the grabbed
+                                                        // FROM pin snapped (still connected).
+                                                        state.dragging = Dragging::EdgeOver(
+                                                            to_node_idx,
+                                                            to_pin_idx,
+                                                            node_index,
+                                                            pin_index,
+                                                        );
+                                                        shell.capture_event();
+                                                        return;
+                                                    }
+                                                    // If we clicked the "to" pin, unplug TO and drag it
+                                                    // Keep FROM pin connected, drag away from it
+                                                    else if to_ref.node_id == current_node_id
+                                                        && to_ref.pin_id == pin_state.pin_id
+                                                    {
+                                                        // Magnetic plug: grabbing a connected pin
+                                                        // does NOT disconnect yet. Enter the snapped
+                                                        // EdgeOver state anchored at the OTHER (FROM)
+                                                        // end; the hysteresis in the EdgeOver handler
+                                                        // fires on_disconnect only once the cursor
+                                                        // leaves the grabbed pin by more than
+                                                        // UNSNAP_THRESHOLD.
+                                                        // Resolve from_ref to indices for internal Dragging state
+                                                        let from_node_idx = match self
+                                                            .node_index(&from_ref.node_id)
+                                                        {
                                                             Some(idx) => idx,
                                                             None => continue,
-                                                        }
-                                                    };
-                                                    // Compute valid targets for the new drag
-                                                    let valid_targets = compute_valid_targets(
-                                                        self,
-                                                        tree,
-                                                        layout,
-                                                        from_node_idx,
-                                                        from_pin_idx,
-                                                    );
-                                                    let state =
-                                                        tree.state.downcast_mut::<NodeGraphState>();
-                                                    state.valid_drop_targets = valid_targets;
-                                                    // Anchor at the FROM pin, hold the grabbed
-                                                    // TO pin snapped (still connected).
-                                                    state.dragging = Dragging::EdgeOver(
-                                                        from_node_idx,
-                                                        from_pin_idx,
-                                                        node_index,
-                                                        pin_index,
-                                                    );
-                                                    shell.capture_event();
-                                                    return;
+                                                        };
+                                                        let from_pin_idx = {
+                                                            let from_tree = match tree
+                                                                .children
+                                                                .get(from_node_idx)
+                                                            {
+                                                                Some(t) => t,
+                                                                None => continue,
+                                                            };
+                                                            let from_layout = match layout
+                                                                .children()
+                                                                .nth(from_node_idx)
+                                                            {
+                                                                Some(l) => l,
+                                                                None => continue,
+                                                            };
+                                                            let from_pins = find_pins::<P, UI>(
+                                                                from_tree,
+                                                                from_layout,
+                                                            );
+                                                            match from_pins.iter().position(
+                                                                |(_, s, _)| {
+                                                                    s.pin_id == from_ref.pin_id
+                                                                },
+                                                            ) {
+                                                                Some(idx) => idx,
+                                                                None => continue,
+                                                            }
+                                                        };
+                                                        // Compute valid targets for the new drag
+                                                        let valid_targets = compute_valid_targets(
+                                                            self,
+                                                            tree,
+                                                            layout,
+                                                            from_node_idx,
+                                                            from_pin_idx,
+                                                        );
+                                                        let state = tree
+                                                            .state
+                                                            .downcast_mut::<NodeGraphState>();
+                                                        state.valid_drop_targets = valid_targets;
+                                                        // Anchor at the FROM pin, hold the grabbed
+                                                        // TO pin snapped (still connected).
+                                                        state.dragging = Dragging::EdgeOver(
+                                                            from_node_idx,
+                                                            from_pin_idx,
+                                                            node_index,
+                                                            pin_index,
+                                                        );
+                                                        shell.capture_event();
+                                                        return;
+                                                    }
                                                 }
-                                            }
+                                            } // end if !shift_held
 
-                                            // If no existing connection, start a new drag
+                                            // No existing connection (or shift held to fork
+                                            // a new edge): start a fresh drag.
                                             // Compute valid targets ONCE at drag-start
                                             let valid_targets = compute_valid_targets(
                                                 self, tree, layout, node_index, pin_index,
