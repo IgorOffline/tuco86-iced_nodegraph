@@ -214,15 +214,18 @@ pub struct SdfDebug {
 /// Identifies what an in-progress drag is moving. Delivered to the
 /// [`on_drag_start`](NodeGraph::on_drag_start) callback so the app can observe a
 /// drag live (e.g. to broadcast it), alongside the commit-on-drop callbacks.
+///
+/// Ids are the user's own node/pin id types (`N`/`P`), matching the rest of the
+/// callback API (e.g. [`PinRef`]); both default to `usize`.
 #[derive(Debug, Clone)]
-pub enum DragInfo {
-    /// Dragging a single node
-    Node { node_id: usize },
-    /// Dragging a group of selected nodes
-    Group { node_ids: Vec<usize> },
-    /// Dragging an edge from a pin
-    Edge { from_node: usize, from_pin: usize },
-    /// Box selection drag
+pub enum DragInfo<N = usize, P = usize> {
+    /// Dragging a single node.
+    Node { node_id: N },
+    /// Dragging a group of selected nodes.
+    Group { node_ids: Vec<N> },
+    /// Dragging an edge from a pin (the source node and pin).
+    Edge { from_node: N, from_pin: P },
+    /// Box selection drag, anchored at this world-space corner.
     BoxSelect { start_x: f32, start_y: f32 },
 }
 
@@ -301,8 +304,8 @@ pub struct NodeGraph<
     // in addition to the commit-on-drop on_move. They make live
     // observation of an in-progress drag possible (e.g. collaborative broadcast),
     // which is the app's concern, not the widget's.
-    on_drag_start: Option<Box<dyn Fn(DragInfo) -> Message + 'a>>,
-    on_drag_update: Option<Box<dyn Fn(f32, f32) -> Message + 'a>>,
+    on_drag_start: Option<Box<dyn Fn(DragInfo<N, P>) -> Message + 'a>>,
+    on_drag_update: Option<Box<dyn Fn(Point) -> Message + 'a>>,
     on_drag_end: Option<Box<dyn Fn() -> Message + 'a>>,
     /// Commit callback for pan/zoom: fires with the new camera (position, zoom)
     /// when the user finishes a pan drag or zooms. The host stores it and feeds
@@ -549,14 +552,17 @@ where
 
     /// Sets a callback for when a drag operation starts.
     /// Used for real-time collaboration to broadcast drag state to other users.
-    pub fn on_drag_start(mut self, f: impl Fn(DragInfo) -> Message + 'a) -> Self {
+    pub fn on_drag_start(mut self, f: impl Fn(DragInfo<N, P>) -> Message + 'a) -> Self {
         self.on_drag_start = Some(Box::new(f));
         self
     }
 
     /// Sets a callback for drag position updates.
-    /// Called frequently during drag operations with current cursor position (world coordinates).
-    pub fn on_drag_update(mut self, f: impl Fn(f32, f32) -> Message + 'a) -> Self {
+    ///
+    /// Called frequently during a drag with the current cursor position in world
+    /// coordinates as a [`Point`] (a semantic type, matching `on_move`'s
+    /// `Vector`, rather than a bare `(f32, f32)` tuple).
+    pub fn on_drag_update(mut self, f: impl Fn(Point) -> Message + 'a) -> Self {
         self.on_drag_update = Some(Box::new(f));
         self
     }
@@ -640,10 +646,12 @@ where
     pub(super) fn on_delete_handler(&self) -> Option<&Box<dyn Fn(Vec<N>) -> Message + 'a>> {
         self.on_delete.as_ref()
     }
-    pub(super) fn on_drag_start_handler(&self) -> Option<&Box<dyn Fn(DragInfo) -> Message + 'a>> {
+    pub(super) fn on_drag_start_handler(
+        &self,
+    ) -> Option<&Box<dyn Fn(DragInfo<N, P>) -> Message + 'a>> {
         self.on_drag_start.as_ref()
     }
-    pub(super) fn on_drag_update_handler(&self) -> Option<&Box<dyn Fn(f32, f32) -> Message + 'a>> {
+    pub(super) fn on_drag_update_handler(&self) -> Option<&Box<dyn Fn(Point) -> Message + 'a>> {
         self.on_drag_update.as_ref()
     }
     pub(super) fn on_drag_end_handler(&self) -> Option<&Box<dyn Fn() -> Message + 'a>> {

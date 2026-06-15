@@ -1527,7 +1527,7 @@ where
                         if let Some(cursor_position) = world_cursor.position()
                             && let Some(handler) = self.on_drag_update_handler()
                         {
-                            shell.publish(handler(cursor_position.x, cursor_position.y));
+                            shell.publish(handler(cursor_position));
                         }
                         shell.capture_event();
                         shell.request_redraw();
@@ -2343,8 +2343,8 @@ where
                                             // Emit drag start event
                                             if let Some(handler) = self.on_drag_start_handler() {
                                                 shell.publish(handler(DragInfo::Edge {
-                                                    from_node: node_index,
-                                                    from_pin: pin_index,
+                                                    from_node: current_node_id.clone(),
+                                                    from_pin: pin_state.pin_id.clone(),
                                                 }));
                                             }
                                             shell.capture_event();
@@ -2395,7 +2395,7 @@ where
                                             // Emit drag start event for group
                                             if let Some(handler) = self.on_drag_start_handler() {
                                                 shell.publish(handler(DragInfo::Group {
-                                                    node_ids: selected,
+                                                    node_ids: self.translate_node_ids(&selected),
                                                 }));
                                             }
                                         } else {
@@ -2405,10 +2405,11 @@ where
                                                 cursor_position.into_euclid(),
                                             );
                                             // Emit drag start event for single node
-                                            if let Some(handler) = self.on_drag_start_handler() {
-                                                shell.publish(handler(DragInfo::Node {
-                                                    node_id: node_index,
-                                                }));
+                                            if let Some(handler) = self.on_drag_start_handler()
+                                                && let Some(node_id) =
+                                                    self.index_to_node_id(node_index)
+                                            {
+                                                shell.publish(handler(DragInfo::Node { node_id }));
                                             }
                                         }
 
