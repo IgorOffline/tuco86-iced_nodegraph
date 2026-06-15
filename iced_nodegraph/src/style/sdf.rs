@@ -167,15 +167,17 @@ impl NodeStyle {
 
     /// Shadow as a single stop chain over the node's (offset) SDF silhouette.
     ///
-    /// Distance is negative inside the shape, positive outside. The interior is
-    /// held at full shadow (so a translucent body floats over a solid core, and
-    /// an offset shadow reads solid where it peeks out), fading to transparent
-    /// at `shadow_distance`. Being one entry, it has no internal boundary to
-    /// double-antialias - the earlier multi-band tiling produced light seams
-    /// where two coplanar same-color bands each half-antialiased a shared
-    /// boundary and premultiplied compositing dipped below full alpha. Only
-    /// `shadow_color`'s alpha sets the strength; `shadow_distance` is the fade
-    /// width.
+    /// Distance is negative inside the shape, positive outside. A solid core is
+    /// held full below `-shadow_distance`; from there the colour gradients to
+    /// transparent at `+shadow_distance`, so the blur is centred on the
+    /// silhouette and spreads BOTH inward and outward (the edge reads ~50% at the
+    /// silhouette, a soft blur rather than a hard core boundary). The solid core
+    /// still reads through a translucent body and where an offset shadow peeks
+    /// out. Being one entry, it has no internal boundary to double-antialias -
+    /// the earlier multi-band tiling produced light seams where two coplanar
+    /// same-color bands each half-antialiased a shared boundary and premultiplied
+    /// compositing dipped below full alpha. Only `shadow_color`'s alpha sets the
+    /// strength; `shadow_distance` is the half-fade width.
     pub(crate) fn shadow_sdf_layers(&self, opacity: f32) -> Vec<Style> {
         let d = self.shadow_distance.max(0.001);
         let full = Color {
@@ -183,9 +185,10 @@ impl NodeStyle {
             ..self.shadow_color
         };
         let none = transparent(full);
-        // Full inside (held below the first stop), fading to transparent at `d`.
+        // Solid core held below `-d`; gradient to transparent across `[-d, d]`,
+        // so the blur spreads inward and outward from the silhouette.
         vec![Style {
-            stops: vec![Stop::new(0.0, full), Stop::new(d, none)],
+            stops: vec![Stop::new(-d, full), Stop::new(d, none)],
             pattern: None,
             distance_field: false,
         }]
@@ -196,8 +199,9 @@ impl NodeStyle {
 mod shadow_tests {
     use super::NodeStyle;
 
-    /// The shadow is one chain (no separate composited bands to seam): full
-    /// inside the silhouette (stop 0, held below), transparent at `d`.
+    /// The shadow is one chain (no separate composited bands to seam): a solid
+    /// core held below `-shadow_distance`, gradient to transparent at
+    /// `+shadow_distance`, centred on the silhouette.
     #[test]
     fn shadow_fills_interior_and_fades_out() {
         let style = NodeStyle::input();
@@ -205,15 +209,18 @@ mod shadow_tests {
 
         assert_eq!(layers.len(), 1, "shadow must be a single entry");
         let stops = &layers[0].stops;
-        assert_eq!(stops.len(), 2, "full inside -> transparent outside");
-        assert_eq!(stops[0].dist, 0.0);
+        assert_eq!(stops.len(), 2, "solid core -> transparent outside");
+        assert_eq!(
+            stops[0].dist, -style.shadow_distance,
+            "gradient starts at -shadow_distance (solid core held below it)",
+        );
         assert_eq!(
             stops[0].start.a, style.shadow_color.a,
-            "full at and inside the silhouette",
+            "full at the inner edge of the gradient",
         );
         assert_eq!(
             stops[1].dist, style.shadow_distance,
-            "fades out at distance"
+            "fades out at +shadow_distance"
         );
         assert_eq!(stops[1].start.a, 0.0, "transparent at the outer edge");
     }
