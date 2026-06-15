@@ -1,10 +1,10 @@
 //! Style definitions for NodeGraph visual customization.
 //!
-//! Node, edge, and pin styles are flat, concrete structs in the [`node`],
-//! [`edge`], and [`pin`] submodules: the fully populated form the renderer
-//! consumes. The theme-derived defaults live in [`defaults`]; override
-//! individual fields with struct-update syntax over them. See
-//! [`color::ColorQuad`] for the unified color type.
+//! Node, edge, and pin styles are flat, concrete structs ([`NodeStyle`],
+//! [`EdgeStyle`], [`PinStyle`]): the fully populated form the renderer consumes.
+//! The theme-derived defaults are [`default_node_style`], [`default_edge_style`]
+//! and [`default_pin_style`]; override individual fields with struct-update
+//! syntax over them. See [`ColorQuad`] for the unified color type.
 //!
 //! [`GraphStyle`] and [`SelectionStyle`] (canvas background, selection overlay,
 //! drag-edge colors) are also plain structs; they are not per-element styles.

@@ -4,6 +4,11 @@
 //! segments (lines, arcs, bezier curves). Front-to-back rendering with
 //! alpha early-out.
 //!
+//! This crate is the rendering engine behind `iced_nodegraph`. Most users do not
+//! depend on it directly: `iced_nodegraph` drives it internally and re-exports the
+//! part of its surface that node-graph styling touches (`Pattern` and its
+//! `PatternType`). Reach for this crate directly only for custom SDF rendering.
+//!
 //! # Builders
 //!
 //! - [`Curve`] - Disconnected segments and factory shapes (edges, lines, beziers, rects, circles)

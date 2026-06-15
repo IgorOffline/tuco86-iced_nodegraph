@@ -141,7 +141,7 @@ pub struct Edge<'a, N, P, E, UI, Theme> {
 
 /// Creates an [`Edge`] with the given id and default (theme) styling.
 ///
-/// The id comes last so the common no-id case reads cleanly via the [`edge!`]
+/// The id comes last so the common no-id case reads cleanly via the `edge!`
 /// macro: `edge!(from, to)` expands to `edge(from, to, ())`.
 pub fn edge<'a, N, P, E, UI, Theme>(
     from: PinRef<N, P>,

@@ -168,10 +168,15 @@ where
     P: PinId,
     Renderer: renderer::Renderer,
 {
+    /// Which side of the node the pin sits on.
     pub side: PinSide,
+    /// Whether the pin is an input, an output, or both.
     pub direction: PinDirection,
+    /// The pin's user id, unique within its node.
     pub pin_id: P,
+    /// User-defined per-pin payload, surfaced to `pin_style` / `can_connect`.
     pub user_info: UI,
+    /// The widget drawn as the pin's label/content.
     pub content: Element<'a, Message, Theme, Renderer>,
     interactions_disabled: bool,
 }

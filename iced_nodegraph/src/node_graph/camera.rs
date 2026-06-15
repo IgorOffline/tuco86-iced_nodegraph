@@ -209,18 +209,24 @@ impl Camera2D {
         self
     }
 
+    /// The widget's screen-space origin (top-left), as last set by
+    /// [`with_viewport_origin`](Self::with_viewport_origin). Folded into the
+    /// screen/world transforms so the graph can sit anywhere on screen.
     pub fn viewport_origin(&self) -> ScreenVector {
         self.viewport_origin
     }
 
+    /// The current zoom factor; values above 1.0 zoom in.
     pub fn zoom(&self) -> f32 {
         self.zoom.get()
     }
 
+    /// The current pan position (world-space origin offset).
     pub fn position(&self) -> WorldPoint {
         self.position
     }
 
+    /// Screen-to-world transform: `world = (screen - viewport_origin) / zoom - position`.
     pub fn screen_to_world(&self) -> ScreenToWorld {
         // Converts screen coordinates to world coordinates, factoring in zoom,
         // position, and the widget's viewport origin.
@@ -232,6 +238,7 @@ impl Camera2D {
             .then_translate(-self.position.to_vector())
     }
 
+    /// World-to-screen transform: `screen = (world + position) * zoom + viewport_origin`.
     pub fn world_to_screen(&self) -> Transform2D<f32, World, Screen> {
         // Converts world coordinates to screen coordinates.
         // The transform is always invertible since zoom is clamped to [0.1, 10.0].
