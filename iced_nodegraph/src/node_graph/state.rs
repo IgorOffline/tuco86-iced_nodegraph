@@ -7,10 +7,11 @@
 //! - Selection state
 //! - Keyboard modifier tracking
 
+use super::GraphInfo;
 use super::camera::Camera2D;
 use super::euclid::WorldPoint;
 use iced::{Point, keyboard};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use web_time::Instant;
 
@@ -60,6 +61,9 @@ pub(super) struct NodeGraphState {
     /// Set during draw() when any SDF primitive has active animations.
     /// Read during update() to drive continuous redraws via shell.request_redraw().
     pub(super) sdf_animated: Cell<bool>,
+    /// Latest per-frame diagnostics, written during draw() and taken during
+    /// update() to publish via the `info` callback (one frame behind).
+    pub(super) last_info: RefCell<Option<GraphInfo>>,
     /// Per-node z-order timestamp. Higher = more recently moved (or newly added).
     /// Indexed by internal node index. Newly seen indices are auto-assigned the
     /// next counter value so freshly pushed nodes spawn on top of older ones.
@@ -83,6 +87,7 @@ impl Default for NodeGraphState {
             valid_drop_targets: HashSet::new(),
             last_synced_view: None,
             sdf_animated: Cell::new(false),
+            last_info: RefCell::new(None),
             node_z: HashMap::new(),
             z_counter: 0,
         }

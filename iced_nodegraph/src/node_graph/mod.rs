@@ -40,6 +40,7 @@
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::time::Duration;
 
 use iced::{Length, Point, Size, Vector};
 
@@ -211,6 +212,52 @@ pub struct SdfDebug {
     pub node_foreground: bool,
 }
 
+/// Counts for one element kind in a frame: how many exist, how many are in view,
+/// and how many were culled (off-screen). `total == in_view + culled`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counts {
+    /// Total elements of this kind in the graph.
+    pub total: usize,
+    /// Elements whose screen bounds intersect the viewport.
+    pub in_view: usize,
+    /// Elements fully off-screen.
+    pub culled: usize,
+}
+
+/// One timed slice of the per-frame CPU work, in the order it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpTiming {
+    /// Stable label of the operation (e.g. `"geometry"`, `"edges"`).
+    pub label: &'static str,
+    /// CPU time the operation took this frame.
+    pub duration: Duration,
+}
+
+/// Per-frame diagnostics for the graph, delivered to [`NodeGraph::info`].
+///
+/// `nodes`/`pins`/`edges` are [`Counts`]; `timings` is the CPU cost of each draw
+/// operation in stack order (geometry, shadows, edges, foreground, sdf prepare)
+/// and sums to roughly the per-frame CPU time. `sdf_entries`/`sdf_tiles` are the
+/// SDF pipeline counters. All timings are CPU-side; no GPU profiling is done.
+///
+/// Reported one frame behind: the values are measured during `draw` and
+/// delivered on the next redraw, mirroring the controlled `on_pan` pattern.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphInfo {
+    /// Node counts (total / in view / culled).
+    pub nodes: Counts,
+    /// Pin counts across all nodes.
+    pub pins: Counts,
+    /// Edge counts.
+    pub edges: Counts,
+    /// Per-operation CPU timings, in stack order.
+    pub timings: Vec<OpTiming>,
+    /// SDF draw entries submitted this frame.
+    pub sdf_entries: u32,
+    /// SDF tiles the index covered this frame.
+    pub sdf_tiles: u32,
+}
+
 /// Identifies what an in-progress drag is moving. Delivered to the
 /// [`on_drag_start`](NodeGraph::on_drag_start) callback so the app can observe a
 /// drag live (e.g. to broadcast it), alongside the commit-on-drop callbacks.
@@ -320,6 +367,8 @@ pub struct NodeGraph<
     /// when the user finishes a pan drag or zooms. The host stores it and feeds
     /// it back via `view()`, mirroring `on_move` / `selection`.
     on_pan: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
+    /// Per-frame diagnostics callback (element counts + CPU op timings).
+    on_info: Option<Box<dyn Fn(GraphInfo) -> Message + 'a>>,
     /// Style callback for box selection overlay.
     /// Returns (fill_color, border_color).
     pub(super) box_select_style_fn: Option<Box<dyn Fn(&Theme) -> (iced::Color, iced::Color) + 'a>>,
@@ -368,6 +417,7 @@ where
             on_drag_update: None,
             on_drag_end: None,
             on_pan: None,
+            on_info: None,
             box_select_style_fn: None,
             cutting_tool_style_fn: None,
             dragging_edge_style_fn: None,
@@ -599,6 +649,18 @@ where
         self
     }
 
+    /// Sets the per-frame diagnostics callback.
+    ///
+    /// Fires once per redraw with a [`GraphInfo`]: element counts (total / in
+    /// view / culled) and the CPU time of each draw operation, in stack order.
+    /// Values are measured during `draw` and delivered on the next redraw (one
+    /// frame behind), so a live readout should keep requesting redraws. CPU-side
+    /// only; no GPU profiling.
+    pub fn info(mut self, f: impl Fn(GraphInfo) -> Message + 'a) -> Self {
+        self.on_info = Some(Box::new(f));
+        self
+    }
+
     /// Sets the external selection using user node IDs.
     ///
     /// The IDs are converted to internal indices. Unknown IDs are ignored.
@@ -678,6 +740,9 @@ where
 
     pub(super) fn on_pan_handler(&self) -> Option<&Box<dyn Fn(Point, f32) -> Message + 'a>> {
         self.on_pan.as_ref()
+    }
+    pub(super) fn on_info_handler(&self) -> Option<&Box<dyn Fn(GraphInfo) -> Message + 'a>> {
+        self.on_info.as_ref()
     }
     pub(super) fn view_value(&self) -> Option<(Point, f32)> {
         self.view

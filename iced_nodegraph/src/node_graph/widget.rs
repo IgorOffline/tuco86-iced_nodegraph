@@ -23,7 +23,7 @@ use iced_widget::core::{
 use web_time::Instant;
 
 use super::{
-    DragInfo, NodeGraph, RenderContext,
+    Counts, DragInfo, GraphInfo, NodeGraph, OpTiming, RenderContext,
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState, z_render_indices},
 };
@@ -610,6 +610,7 @@ where
             position: WorldPoint,
             size: Size,
         }
+        let t_geom_start = Instant::now();
         let node_geoms: Vec<Option<NodeGeom>> = (0..self.nodes.len())
             .map(|node_index| {
                 let (_id, _position, _element, node_style, node_pin_style) =
@@ -657,6 +658,7 @@ where
                 })
             })
             .collect();
+        let t_after_geom = Instant::now();
 
         // ========================================
         // Node shadows (batched). Drawn BEFORE the edges so a node's filled
@@ -702,6 +704,7 @@ where
                 });
             }
         }
+        let t_after_shadow = Instant::now();
 
         // ========================================
         // Edges (batched into single draw call), drawn over the node shadows.
@@ -885,6 +888,7 @@ where
                 }
             }
         });
+        let t_after_edges = Instant::now();
 
         // ========================================
         // Layers 4..N: Nodes (each node gets 3 sub-layers)
@@ -1131,6 +1135,7 @@ where
                 }
             }
         }
+        let t_after_fg = Instant::now();
 
         // ========================================
         // Layer N+1: Box Selection Overlay
@@ -1241,6 +1246,91 @@ where
                     renderer.draw_primitive(cutting_clip, cutting_primitive);
                 });
             }
+        }
+
+        // Gather per-frame diagnostics (CPU-side) and stash them for the next
+        // update() to deliver via the `info` callback. Only when a host asked for
+        // them; cheap otherwise (a few elapsed reads + one bbox test per node).
+        if self.on_info.is_some() {
+            let viewport = layout.bounds();
+            let mut node_in_view = vec![false; node_geoms.len()];
+            let mut nodes_in = 0usize;
+            let mut pins_total = 0usize;
+            let mut pins_in = 0usize;
+            for (i, geom) in node_geoms.iter().enumerate() {
+                let Some(geom) = geom else { continue };
+                let bb = world_bbox_to_screen_bounds(
+                    geom.position.x,
+                    geom.position.y,
+                    geom.position.x + geom.size.width,
+                    geom.position.y + geom.size.height,
+                    0.0,
+                    &render_context,
+                );
+                let rect = Rectangle {
+                    x: bb[0],
+                    y: bb[1],
+                    width: bb[2],
+                    height: bb[3],
+                };
+                let in_view = rect.intersects(&viewport);
+                node_in_view[i] = in_view;
+                if in_view {
+                    nodes_in += 1;
+                }
+                if let (Some(nt), Some(nl)) = (tree.children.get(i), layout.children().nth(i)) {
+                    let pin_count = find_pins::<P, UI>(nt, nl).len();
+                    pins_total += pin_count;
+                    if in_view {
+                        pins_in += pin_count;
+                    }
+                }
+            }
+            let edges_in = self
+                .edges
+                .iter()
+                .filter(|(_, from, to, _)| {
+                    let visible = |id| self.node_index(id).is_some_and(|idx| node_in_view[idx]);
+                    visible(&from.node_id) || visible(&to.node_id)
+                })
+                .count();
+
+            let counts = |total: usize, in_view: usize| Counts {
+                total,
+                in_view,
+                culled: total - in_view,
+            };
+            let sdf = iced_nodegraph_sdf::sdf_stats();
+            let info = GraphInfo {
+                nodes: counts(node_geoms.len(), nodes_in),
+                pins: counts(pins_total, pins_in),
+                edges: counts(self.edges.len(), edges_in),
+                timings: vec![
+                    OpTiming {
+                        label: "geometry",
+                        duration: t_after_geom - t_geom_start,
+                    },
+                    OpTiming {
+                        label: "shadows",
+                        duration: t_after_shadow - t_after_geom,
+                    },
+                    OpTiming {
+                        label: "edges",
+                        duration: t_after_edges - t_after_shadow,
+                    },
+                    OpTiming {
+                        label: "foreground",
+                        duration: t_after_fg - t_after_edges,
+                    },
+                    OpTiming {
+                        label: "sdf_prepare",
+                        duration: std::time::Duration::from_micros(sdf.prepare_cpu_us),
+                    },
+                ],
+                sdf_entries: sdf.entry_count,
+                sdf_tiles: sdf.tile_count,
+            };
+            state.last_info.replace(Some(info));
         }
     }
 
@@ -1397,12 +1487,21 @@ where
         }
         state.last_update = Some(now);
 
-        // Drive continuous redraws when SDF animations are active.
-        // The flag is set during draw() by checking SdfPrimitive::has_animations().
-        if let Event::Window(iced::window::Event::RedrawRequested(_)) = event
-            && state.sdf_animated.get()
-        {
-            shell.request_redraw();
+        // On each frame, drive continuous redraws for SDF animations and deliver
+        // the diagnostics measured during the previous draw().
+        if let Event::Window(iced::window::Event::RedrawRequested(_)) = event {
+            if state.sdf_animated.get() {
+                shell.request_redraw();
+            }
+            // Publish the stashed GraphInfo (set during draw) one frame behind,
+            // mirroring the controlled on_pan pattern. A host showing live
+            // diagnostics needs a steady frame stream, so keep redraws flowing.
+            if let Some(handler) = self.on_info_handler() {
+                if let Some(info) = state.last_info.borrow_mut().take() {
+                    shell.publish(handler(info));
+                }
+                shell.request_redraw();
+            }
         }
 
         // Track keyboard modifiers for Shift/Ctrl selection

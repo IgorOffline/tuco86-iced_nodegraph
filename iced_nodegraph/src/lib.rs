@@ -194,8 +194,8 @@
 pub use content::{EdgeRadii, node_footer, node_header};
 pub use ids::{EdgeId, NodeId, PinId};
 pub use node_graph::{
-    DragInfo, Edge, Node, NodeGraph, PinRef, SdfDebug, camera::Camera2D, edge, node,
-    widget::node_graph,
+    Counts, DragInfo, Edge, GraphInfo, Node, NodeGraph, OpTiming, PinRef, SdfDebug,
+    camera::Camera2D, edge, node, widget::node_graph,
 };
 pub use node_pin::{NodePin, PinDirection, PinEnd, PinInfo, PinSide, node_pin};
 pub use style::{
