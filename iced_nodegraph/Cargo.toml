@@ -31,3 +31,4 @@ iced_wgpu = { workspace = true, features = ["webgl"] }
 
 [dev-dependencies]
 iced_test = { workspace = true }
+proptest = "1"

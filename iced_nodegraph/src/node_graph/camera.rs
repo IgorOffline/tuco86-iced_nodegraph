@@ -829,3 +829,131 @@ mod tests {
         );
     }
 }
+
+/// Property tests generalizing the example-based invariants above over a
+/// generated input space. The example tests stay as named regression anchors;
+/// these assert the same laws hold for arbitrary `(zoom, position, origin,
+/// point)` combinations within realistic bounds.
+///
+/// Tolerances are magnitude-scaled: f32 round-trip error grows with the largest
+/// intermediate coordinate (the screen-space input divided by a small zoom, plus
+/// the camera position), so a fixed absolute epsilon would be both too tight for
+/// large coordinates and too loose for small ones.
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Bounds chosen so f32 stays well-conditioned while still covering the full
+    // zoom clamp range and off-origin widgets. zoom matches the [0.1, 10.0]
+    // clamp used by `zoom_at`.
+    const ZOOM: std::ops::RangeInclusive<f32> = 0.1..=10.0;
+    const COORD: std::ops::RangeInclusive<f32> = -5000.0..=5000.0;
+    const ORIGIN: std::ops::RangeInclusive<f32> = -1000.0..=1000.0;
+    const SCREEN: std::ops::RangeInclusive<f32> = 0.0..=2000.0;
+
+    /// Tolerance scaled by the magnitude of the values being compared, plus a
+    /// small absolute floor. A genuinely wrong inverse (e.g. the `.pre_scale`
+    /// bug documented in this module) is off by zoom *factors*, not by this
+    /// margin, so the check still bites.
+    fn close(a: f32, b: f32, scale: f32) -> bool {
+        let eps = 1e-2 + 1e-4 * scale.abs();
+        (a - b).abs() <= eps
+    }
+
+    fn camera(zoom: f32, px: f32, py: f32, ox: f32, oy: f32) -> Camera2D {
+        Camera2D::with_zoom_and_position(zoom, WorldPoint::new(px, py))
+            .with_viewport_origin(ScreenVector::new(ox, oy))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        /// screen -> world -> screen is the identity for any camera.
+        #[test]
+        fn screen_world_screen_round_trip(
+            zoom in ZOOM, px in COORD, py in COORD, ox in ORIGIN, oy in ORIGIN,
+            sx in SCREEN, sy in SCREEN,
+        ) {
+            let cam = camera(zoom, px, py, ox, oy);
+            let screen = ScreenPoint::new(sx, sy);
+            let world = cam.screen_to_world().transform_point(screen);
+            let back = cam.world_to_screen().transform_point(world);
+
+            let scale = world.x.abs() + world.y.abs() + zoom * (px.abs() + py.abs());
+            prop_assert!(close(screen.x, back.x, scale), "x: {} -> {} (scale {})", screen.x, back.x, scale);
+            prop_assert!(close(screen.y, back.y, scale), "y: {} -> {} (scale {})", screen.y, back.y, scale);
+        }
+
+        /// world -> screen -> world is the identity for any camera.
+        #[test]
+        fn world_screen_world_round_trip(
+            zoom in ZOOM, px in COORD, py in COORD, ox in ORIGIN, oy in ORIGIN,
+            wx in COORD, wy in COORD,
+        ) {
+            let cam = camera(zoom, px, py, ox, oy);
+            let world = WorldPoint::new(wx, wy);
+            let screen = cam.world_to_screen().transform_point(world);
+            let back = cam.screen_to_world().transform_point(screen);
+
+            let scale = wx.abs() + wy.abs() + px.abs() + py.abs();
+            prop_assert!(close(world.x, back.x, scale), "x: {} -> {} (scale {})", world.x, back.x, scale);
+            prop_assert!(close(world.y, back.y, scale), "y: {} -> {} (scale {})", world.y, back.y, scale);
+        }
+
+        /// The world point under the cursor is invariant across `zoom_at`.
+        #[test]
+        fn zoom_at_keeps_cursor_world_fixed(
+            zoom in ZOOM, px in COORD, py in COORD, ox in ORIGIN, oy in ORIGIN,
+            sx in SCREEN, sy in SCREEN, delta in -5.0f32..=5.0f32,
+        ) {
+            let cam = camera(zoom, px, py, ox, oy);
+            let cursor = ScreenPoint::new(sx, sy);
+            let before = cam.screen_to_world().transform_point(cursor);
+            let zoomed = cam.zoom_at(cursor, delta);
+            let after = zoomed.screen_to_world().transform_point(cursor);
+
+            // Error here is dominated by the post-zoom world magnitude.
+            let scale = before.x.abs() + before.y.abs() + after.x.abs() + after.y.abs();
+            prop_assert!(close(before.x, after.x, scale), "x drift: {} -> {} (scale {})", before.x, after.x, scale);
+            prop_assert!(close(before.y, after.y, scale), "y drift: {} -> {} (scale {})", before.y, after.y, scale);
+            // zoom stays inside the documented clamp.
+            prop_assert!(zoomed.zoom() >= 0.1 && zoomed.zoom() <= 10.0);
+        }
+
+        /// `move_by` composes additively: two moves equal one move by the sum.
+        #[test]
+        fn move_by_is_additive(
+            zoom in ZOOM, px in COORD, py in COORD,
+            ax in COORD, ay in COORD, bx in COORD, by in COORD,
+        ) {
+            let cam = Camera2D::with_zoom_and_position(zoom, WorldPoint::new(px, py));
+            let stepwise = cam.move_by(WorldVector::new(ax, ay)).move_by(WorldVector::new(bx, by));
+            let combined = cam.move_by(WorldVector::new(ax + bx, ay + by));
+
+            let scale = px.abs() + py.abs() + ax.abs() + ay.abs() + bx.abs() + by.abs();
+            prop_assert!(close(stepwise.position().x, combined.position().x, scale));
+            prop_assert!(close(stepwise.position().y, combined.position().y, scale));
+        }
+
+        /// Setting the viewport origin is a pure translation in screen space:
+        /// it shifts every world->screen result by exactly the origin vector and
+        /// nothing else (no scaling, no interaction with zoom/position).
+        #[test]
+        fn viewport_origin_is_pure_screen_translation(
+            zoom in ZOOM, px in COORD, py in COORD, ox in ORIGIN, oy in ORIGIN,
+            wx in COORD, wy in COORD,
+        ) {
+            let base = Camera2D::with_zoom_and_position(zoom, WorldPoint::new(px, py));
+            let shifted = base.with_viewport_origin(ScreenVector::new(ox, oy));
+            let world = WorldPoint::new(wx, wy);
+
+            let s0 = base.world_to_screen().transform_point(world);
+            let s1 = shifted.world_to_screen().transform_point(world);
+
+            let scale = s0.x.abs() + s0.y.abs();
+            prop_assert!(close(s1.x, s0.x + ox, scale), "x: {} vs {}+{}", s1.x, s0.x, ox);
+            prop_assert!(close(s1.y, s0.y + oy, scale), "y: {} vs {}+{}", s1.y, s0.y, oy);
+        }
+    }
+}
