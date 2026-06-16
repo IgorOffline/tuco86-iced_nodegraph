@@ -23,7 +23,7 @@ This is a **Cargo workspace** containing:
 
 ## Development Status
 
-**Pre-release** - The API may change. Not yet published to crates.io.
+**0.1.0** - Initial release. Pre-1.0, so the API may still change between minor versions.
 
 **Target**: Iced 0.14 | **Platforms**: Windows, macOS, Linux, WebAssembly (Chrome)
 
