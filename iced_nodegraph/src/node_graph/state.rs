@@ -62,7 +62,7 @@ pub(super) struct NodeGraphState {
     /// Read during update() to drive continuous redraws via shell.request_redraw().
     pub(super) sdf_animated: Cell<bool>,
     /// Latest per-frame diagnostics, written during draw() and taken during
-    /// update() to publish via the `info` callback (one frame behind).
+    /// update() to publish via the `on_info` callback (one frame behind).
     pub(super) last_info: RefCell<Option<GraphInfo>>,
     /// Per-node z-order timestamp. Higher = more recently moved (or newly added).
     /// Indexed by internal node index. Newly seen indices are auto-assigned the

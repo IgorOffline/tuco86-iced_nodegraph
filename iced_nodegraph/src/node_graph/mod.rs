@@ -233,7 +233,7 @@ pub struct OpTiming {
     pub duration: Duration,
 }
 
-/// Per-frame diagnostics for the graph, delivered to [`NodeGraph::info`].
+/// Per-frame diagnostics for the graph, delivered to [`NodeGraph::on_info`].
 ///
 /// `nodes`/`pins`/`edges` are [`Counts`]; `timings` is the CPU cost of each draw
 /// operation in stack order (geometry, shadows, edges, foreground, sdf prepare)
@@ -656,7 +656,7 @@ where
     /// Values are measured during `draw` and delivered on the next redraw (one
     /// frame behind), so a live readout should keep requesting redraws. CPU-side
     /// only; no GPU profiling.
-    pub fn info(mut self, f: impl Fn(GraphInfo) -> Message + 'a) -> Self {
+    pub fn on_info(mut self, f: impl Fn(GraphInfo) -> Message + 'a) -> Self {
         self.on_info = Some(Box::new(f));
         self
     }

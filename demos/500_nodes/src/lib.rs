@@ -228,7 +228,7 @@ impl Application {
                 .on_select(ApplicationMessage::SelectionChanged)
                 .selection(&self.selected_nodes)
                 .sdf_debug(self.sdf_debug)
-                .info(ApplicationMessage::Info);
+                .on_info(ApplicationMessage::Info);
 
         // Add all nodes
         for (index, (position, node_type)) in self.nodes.iter().enumerate() {

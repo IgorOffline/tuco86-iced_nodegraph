@@ -180,7 +180,7 @@
 //! The widget is stateless between frames - the host owns nodes, edges and
 //! selection - so there are no `node_count()` / `edges()` query methods. For
 //! per-frame metrics (element counts total/in-view/culled and CPU op timings),
-//! register a callback with [`NodeGraph::info`]; it delivers a [`GraphInfo`]
+//! register a callback with [`NodeGraph::on_info`]; it delivers a [`GraphInfo`]
 //! each redraw.
 
 pub use content::{EdgeRadii, node_footer, node_header};

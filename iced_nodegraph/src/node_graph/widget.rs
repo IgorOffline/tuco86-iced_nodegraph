@@ -1284,7 +1284,7 @@ where
         }
 
         // Gather per-frame diagnostics (CPU-side) and stash them for the next
-        // update() to deliver via the `info` callback. Only when a host asked for
+        // update() to deliver via the `on_info` callback. Only when a host asked for
         // them; cheap otherwise (a few elapsed reads + one bbox test per node).
         if self.on_info.is_some() {
             let viewport = layout.bounds();

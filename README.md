@@ -119,7 +119,7 @@ Requires `wasm-pack` and a WebGPU-capable browser (Chrome/Chromium recommended).
 ## Benchmarks
 
 The CPU-side per-frame cost (building node silhouettes, layering, and stroking
-edges into one SDF primitive - the work the `info()` callback times) is measured
+edges into one SDF primitive - the work the `on_info()` callback times) is measured
 with criterion:
 
 ```bash
