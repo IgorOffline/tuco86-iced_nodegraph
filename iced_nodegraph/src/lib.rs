@@ -175,21 +175,13 @@
 //! - **Release**: Releasing the mouse while snapped keeps the connection;
 //!   releasing while not snapped discards the drag
 //!
-//! ## State Query Methods
+//! ## Diagnostics
 //!
-//! ```rust,ignore
-//! let graph: NodeGraph = ...;
-//!
-//! // Query graph state
-//! let count = graph.node_count();
-//! let edges = graph.edge_count();
-//! let pos = graph.node_position(0); // Option<Point>
-//!
-//! // Iterate edges
-//! for (from, to, style) in graph.edges() {
-//!     println!("Edge: {:?} -> {:?}", from, to);
-//! }
-//! ```
+//! The widget is stateless between frames - the host owns nodes, edges and
+//! selection - so there are no `node_count()` / `edges()` query methods. For
+//! per-frame metrics (element counts total/in-view/culled and CPU op timings),
+//! register a callback with [`NodeGraph::info`]; it delivers a [`GraphInfo`]
+//! each redraw.
 
 pub use content::{EdgeRadii, node_footer, node_header};
 pub use ids::{EdgeId, NodeId, PinId};
