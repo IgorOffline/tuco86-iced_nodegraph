@@ -54,6 +54,12 @@ pub struct EdgeConfigData;
 /// Marker type for pin configuration bundle pins
 pub struct PinConfigData;
 
+/// Marker type for graph (canvas) configuration bundle pins
+pub struct GraphConfigData;
+
+/// Marker type for tiling-kind selector pins (grid/dots/triangles/hex)
+pub struct TilingKindData;
+
 // =============================================================================
 // Pin Label Constants
 // =============================================================================
@@ -115,6 +121,9 @@ pub mod cfg {
     /// PinConfig output pin
     pub const PIN_OUT: &str = "pin_config";
 
+    /// GraphConfig output pin
+    pub const GRAPH_OUT: &str = "graph_config";
+
     // === Apply Node Inputs ===
 
     /// Node config input pin (apply nodes)
@@ -125,6 +134,9 @@ pub mod cfg {
 
     /// Pin config input pin (apply nodes)
     pub const PIN_CONFIG: &str = "pin";
+
+    /// Graph (canvas) config input pin (apply-to-graph node)
+    pub const GRAPH_CONFIG: &str = "graph";
 
     /// Toggle on/off input pin
     pub const ON: &str = "on";
@@ -190,6 +202,28 @@ pub mod node {
 
     /// Shadow offset input pin (2D vector)
     pub const SHADOW_OFFSET: &str = "shadow_offset";
+}
+
+/// GraphConfig field pins, mirroring [`iced_nodegraph::GraphStyle`] and its
+/// optional [`iced_nodegraph::TilingBackground`]. The `tiling_kind` pin selects
+/// the repeating pattern; `spacing`/`thickness`/`line_color` shape it. Both color
+/// pins carry a `ColorQuad` (its near corner is taken, since the canvas fields are
+/// plain `Color`).
+pub mod graph {
+    /// Canvas background color input pin
+    pub const BACKGROUND: &str = "background";
+
+    /// Tiling pattern kind input pin (grid/dots/triangles/hex)
+    pub const TILING_KIND: &str = "tiling_kind";
+
+    /// Tiling cell spacing input pin (world units)
+    pub const SPACING: &str = "spacing";
+
+    /// Tiling line thickness / dot radius input pin (world units)
+    pub const THICKNESS: &str = "thickness";
+
+    /// Tiling pattern color input pin
+    pub const LINE_COLOR: &str = "line_color";
 }
 
 /// PinConfig field pins, mirroring [`iced_nodegraph::PinStyle`].
@@ -315,40 +349,75 @@ pub mod build {
     pub const VEC2_OUT: &str = "vec2";
 }
 
-/// Output pins of the Theme node: the active theme's extended palette as colors.
+/// Output pins of the Theme node: the active theme's basic [`iced::theme::Palette`]
+/// as colors (the six flat palette entries, no weak/strong steps). The graded
+/// variants live on the Theme Extended node, see [`theme_ext`].
 pub mod theme {
-    /// Base background color
+    /// Background color
     pub const BACKGROUND: &str = "background";
 
-    /// Weaker background variant
-    pub const BACKGROUND_WEAK: &str = "background_weak";
-
-    /// Stronger background variant
-    pub const BACKGROUND_STRONG: &str = "background_strong";
-
-    /// Default text color (paired with the base background)
+    /// Text color
     pub const TEXT: &str = "text";
 
-    /// Base primary color
+    /// Primary color
     pub const PRIMARY: &str = "primary";
 
-    /// Weaker primary variant
-    pub const PRIMARY_WEAK: &str = "primary_weak";
+    /// Success color
+    pub const SUCCESS: &str = "success";
 
-    /// Stronger primary variant
+    /// Warning color
+    pub const WARNING: &str = "warning";
+
+    /// Danger color
+    pub const DANGER: &str = "danger";
+}
+
+/// Output pins of the Theme Extended node: the active theme's
+/// [`extended_palette`](iced::Theme::extended_palette) as colors. Each accent
+/// group exposes its `base`/`weak`/`strong` step. Labels are distinct from the
+/// basic [`theme`] module so the two nodes never share a pin id.
+pub mod theme_ext {
+    /// Base background color
+    pub const BACKGROUND_BASE: &str = "background_base";
+    /// Weak background variant
+    pub const BACKGROUND_WEAK: &str = "background_weak";
+    /// Strong background variant
+    pub const BACKGROUND_STRONG: &str = "background_strong";
+
+    /// Base primary color
+    pub const PRIMARY_BASE: &str = "primary_base";
+    /// Weak primary variant
+    pub const PRIMARY_WEAK: &str = "primary_weak";
+    /// Strong primary variant
     pub const PRIMARY_STRONG: &str = "primary_strong";
 
     /// Base secondary color
-    pub const SECONDARY: &str = "secondary";
+    pub const SECONDARY_BASE: &str = "secondary_base";
+    /// Weak secondary variant
+    pub const SECONDARY_WEAK: &str = "secondary_weak";
+    /// Strong secondary variant
+    pub const SECONDARY_STRONG: &str = "secondary_strong";
 
     /// Base success color
-    pub const SUCCESS: &str = "success";
+    pub const SUCCESS_BASE: &str = "success_base";
+    /// Weak success variant
+    pub const SUCCESS_WEAK: &str = "success_weak";
+    /// Strong success variant
+    pub const SUCCESS_STRONG: &str = "success_strong";
 
     /// Base warning color
-    pub const WARNING: &str = "warning";
+    pub const WARNING_BASE: &str = "warning_base";
+    /// Weak warning variant
+    pub const WARNING_WEAK: &str = "warning_weak";
+    /// Strong warning variant
+    pub const WARNING_STRONG: &str = "warning_strong";
 
     /// Base danger color
-    pub const DANGER: &str = "danger";
+    pub const DANGER_BASE: &str = "danger_base";
+    /// Weak danger variant
+    pub const DANGER_WEAK: &str = "danger_weak";
+    /// Strong danger variant
+    pub const DANGER_STRONG: &str = "danger_strong";
 }
 
 /// Pin labels for math nodes.

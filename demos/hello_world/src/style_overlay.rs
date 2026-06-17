@@ -11,7 +11,10 @@
 //! the editor exposes them.
 
 use iced::Color;
-use iced_nodegraph::{ColorQuad, EdgeCurve, EdgeStyle, NodeStyle, Pattern, PinShape, PinStyle};
+use iced_nodegraph::{
+    ColorQuad, EdgeCurve, EdgeStyle, GraphStyle, NodeStyle, Pattern, PinShape, PinStyle,
+    TilingBackground, TilingKind,
+};
 
 /// Overlay over [`NodeStyle`]: mirrors every field, since the node-config editor
 /// exposes them all. Shadow color is a plain [`Color`] (not a [`ColorQuad`]),
@@ -282,6 +285,92 @@ impl EdgeOverlay {
         }
         if let Some(v) = self.curve {
             base.curve = v;
+        }
+        base
+    }
+}
+
+/// Overlay over [`GraphStyle`]: the canvas background plus the optional
+/// [`TilingBackground`] fields the graph-config editor exposes. The tiling fields
+/// override the base tiling in place (the theme base ships a subtle grid), so a
+/// node that sets only `tiling_spacing` keeps the base kind/color and just
+/// re-pitches it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GraphOverlay {
+    pub background_color: Option<Color>,
+    pub tiling_kind: Option<TilingKind>,
+    pub tiling_spacing: Option<f32>,
+    pub tiling_thickness: Option<f32>,
+    pub tiling_color: Option<Color>,
+}
+
+impl GraphOverlay {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn background_color(mut self, v: impl Into<Color>) -> Self {
+        self.background_color = Some(v.into());
+        self
+    }
+    pub fn tiling_kind(mut self, v: impl Into<TilingKind>) -> Self {
+        self.tiling_kind = Some(v.into());
+        self
+    }
+    pub fn tiling_spacing(mut self, v: impl Into<f32>) -> Self {
+        self.tiling_spacing = Some(v.into());
+        self
+    }
+    pub fn tiling_thickness(mut self, v: impl Into<f32>) -> Self {
+        self.tiling_thickness = Some(v.into());
+        self
+    }
+    pub fn tiling_color(mut self, v: impl Into<Color>) -> Self {
+        self.tiling_color = Some(v.into());
+        self
+    }
+
+    /// Layers `self` over `other`; `self` wins where set. Stays partial.
+    pub fn merge(&self, other: &Self) -> Self {
+        Self {
+            background_color: self.background_color.or(other.background_color),
+            tiling_kind: self.tiling_kind.or(other.tiling_kind),
+            tiling_spacing: self.tiling_spacing.or(other.tiling_spacing),
+            tiling_thickness: self.tiling_thickness.or(other.tiling_thickness),
+            tiling_color: self.tiling_color.or(other.tiling_color),
+        }
+    }
+
+    /// Applies the set fields onto a concrete base, leaving unset fields intact.
+    /// If any tiling field is set, the base tiling is overridden in place. The
+    /// base normally already carries a tiling (the theme default ships a grid),
+    /// so the fallback only fires for a base built without one; it uses a neutral
+    /// semi-transparent line so it stays visible on any background.
+    pub fn resolve_over(&self, mut base: GraphStyle) -> GraphStyle {
+        if let Some(v) = self.background_color {
+            base.background_color = v;
+        }
+        let has_tiling = self.tiling_kind.is_some()
+            || self.tiling_spacing.is_some()
+            || self.tiling_thickness.is_some()
+            || self.tiling_color.is_some();
+        if has_tiling {
+            let mut tiling = base.tiling.unwrap_or_else(|| {
+                TilingBackground::grid(40.0, 1.0, Color::from_rgba(0.5, 0.5, 0.5, 0.35))
+            });
+            if let Some(v) = self.tiling_kind {
+                tiling.kind = v;
+            }
+            if let Some(v) = self.tiling_spacing {
+                tiling.spacing = v;
+            }
+            if let Some(v) = self.tiling_thickness {
+                tiling.thickness = v;
+            }
+            if let Some(v) = self.tiling_color {
+                tiling.color = v;
+            }
+            base.tiling = Some(tiling);
         }
         base
     }

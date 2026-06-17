@@ -9,7 +9,7 @@ use iced::{
     alignment::Horizontal,
     widget::{button, column, container, row, text},
 };
-use iced_nodegraph::{EdgeCurve, PinShape, pin};
+use iced_nodegraph::{EdgeCurve, PinShape, TilingKind, pin};
 
 use super::{PatternType, colors, node_title_bar, pins};
 
@@ -194,6 +194,78 @@ where
             .padding([10, 12])
     ]
     .width(160.0)
+    .into()
+}
+
+/// Creates a TilingKind selector node with pill buttons
+pub fn tiling_kind_selector_node<'a, Message>(
+    theme: &'a iced::Theme,
+    selected: TilingKind,
+    on_change: impl Fn(TilingKind) -> Message + Clone + 'a,
+) -> iced::Element<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    let style = NodeContentStyle::input(theme);
+    let accent = colors::PIN_ANY;
+
+    let on_change1 = on_change.clone();
+    let on_change2 = on_change.clone();
+    let on_change3 = on_change.clone();
+    let on_change4 = on_change.clone();
+
+    let row1 = row![
+        pill_button(
+            "Grid",
+            TilingKind::Grid,
+            selected,
+            on_change1(TilingKind::Grid),
+            accent
+        ),
+        pill_button(
+            "Dots",
+            TilingKind::Dots,
+            selected,
+            on_change2(TilingKind::Dots),
+            accent
+        ),
+    ]
+    .spacing(4);
+
+    let row2 = row![
+        pill_button(
+            "Triangles",
+            TilingKind::Triangles,
+            selected,
+            on_change3(TilingKind::Triangles),
+            accent
+        ),
+        pill_button(
+            "Hex",
+            TilingKind::Hex,
+            selected,
+            on_change4(TilingKind::Hex),
+            accent
+        ),
+    ]
+    .spacing(4);
+
+    let output_pin = container(pin!(
+        Right,
+        "value",
+        text("value").size(10),
+        Output,
+        ::std::any::TypeId::of::<pins::TilingKindData>()
+    ))
+    .width(Length::Fill)
+    .align_x(Horizontal::Right);
+
+    column![
+        node_title_bar("Tiling Kind", style),
+        container(column![column![row1, row2].spacing(4), output_pin,].spacing(8))
+            .padding([10, 12])
+    ]
+    .width(180.0)
     .into()
 }
 

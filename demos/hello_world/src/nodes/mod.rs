@@ -20,20 +20,21 @@ pub use calendar::calendar_node;
 pub use color_picker::{color_picker_node, color_preset_node};
 pub use combine::{color_quad_node, vec2_node};
 pub use config::{
-    EdgeConfigInputs, EdgeSection, EdgeSections, NodeConfigInputs, NodeSection, NodeSections,
-    PatternType, PinConfigInputs, apply_to_graph_node, apply_to_node_node, edge_config_node,
-    node_config_node, pin_config_node,
+    EdgeConfigInputs, EdgeSection, EdgeSections, GraphConfigInputs, NodeConfigInputs, NodeSection,
+    NodeSections, PatternType, PinConfigInputs, apply_to_graph_node, apply_to_node_node,
+    edge_config_node, graph_config_node, node_config_node, pin_config_node,
 };
 pub use email_parser::email_parser_node;
 pub use email_trigger::email_trigger_node;
 pub use enum_selector::{
     edge_curve_selector_node, pattern_type_selector_node, pin_shape_selector_node,
+    tiling_kind_selector_node,
 };
 pub use filter::filter_node;
 pub use float_slider::{FloatSliderConfig, float_slider_node};
 pub use int_slider::{IntSliderConfig, int_slider_node};
 pub use math::math_node;
-pub use theme_node::theme_node;
+pub use theme_node::{theme_extended_node, theme_node};
 
 use demo_common::NodeContentStyle;
 use iced::{
@@ -41,7 +42,7 @@ use iced::{
     alignment::Horizontal,
     widget::{Container, Row, container, row, text},
 };
-use iced_nodegraph::{ColorQuad, EdgeCurve, PinShape, node_header};
+use iced_nodegraph::{ColorQuad, EdgeCurve, PinShape, TilingKind, node_header};
 
 use crate::style_overlay::{EdgeOverlay, NodeOverlay, PinOverlay};
 
@@ -102,6 +103,7 @@ pub enum NodeValue {
     EdgeCurve(EdgeCurve),
     PinShape(PinShape),
     PatternType(PatternType),
+    TilingKind(TilingKind),
     /// Four-corner color gradient. A plain `Color` coerces to a solid quad via
     /// [`NodeValue::as_color_quad`], so color pins accept both.
     ColorQuad(ColorQuad),
@@ -165,6 +167,13 @@ impl NodeValue {
         }
     }
 
+    pub fn as_tiling_kind(&self) -> Option<TilingKind> {
+        match self {
+            NodeValue::TilingKind(k) => Some(*k),
+            _ => None,
+        }
+    }
+
     /// Reads a color quad. A plain [`NodeValue::Color`] coerces to a solid quad,
     /// so every color pin accepts both a picker and the ColorQuad builder.
     pub fn as_color_quad(&self) -> Option<ColorQuad> {
@@ -210,11 +219,13 @@ pub enum ConfigNodeType {
     NodeConfig(NodeConfigInputs),
     EdgeConfig(EdgeConfigInputs),
     PinConfig(PinConfigInputs),
+    GraphConfig(GraphConfigInputs),
     // Apply nodes
     ApplyToGraph {
         has_node_config: bool,
         has_edge_config: bool,
         has_pin_config: bool,
+        has_graph_config: bool,
     },
     ApplyToNode {
         has_node_config: bool,
@@ -357,6 +368,9 @@ pub enum InputNodeType {
     PatternTypeSelector {
         value: PatternType,
     },
+    TilingKindSelector {
+        value: TilingKind,
+    },
     ColorPicker {
         color: Color,
     },
@@ -376,6 +390,7 @@ impl InputNodeType {
             Self::EdgeCurveSelector { value } => NodeValue::EdgeCurve(*value),
             Self::PinShapeSelector { value } => NodeValue::PinShape(*value),
             Self::PatternTypeSelector { value } => NodeValue::PatternType(*value),
+            Self::TilingKindSelector { value } => NodeValue::TilingKind(*value),
             Self::ColorPicker { color } | Self::ColorPreset { color } => NodeValue::Color(*color),
         }
     }
@@ -389,6 +404,7 @@ impl InputNodeType {
             Self::EdgeCurveSelector { .. } => "edge_curve",
             Self::PinShapeSelector { .. } => "pin_shape",
             Self::PatternTypeSelector { .. } => "pattern_type",
+            Self::TilingKindSelector { .. } => "tiling_kind",
             Self::ColorPicker { .. } | Self::ColorPreset { .. } => "color",
         }
     }
@@ -409,8 +425,10 @@ pub enum NodeType {
     ColorQuad(ColorQuadNode),
     /// Combines two scalars into a 2D vector
     Vec2(Vec2Node),
-    /// Outputs the active theme's extended palette as color pins
+    /// Outputs the active theme's basic palette as color pins
     Theme,
+    /// Outputs the active theme's extended palette (base/weak/strong) as color pins
+    ThemeExtended,
 }
 
 #[allow(dead_code)]
@@ -425,6 +443,7 @@ impl NodeType {
                 InputNodeType::EdgeCurveSelector { .. } => "Edge Curve",
                 InputNodeType::PinShapeSelector { .. } => "Pin Shape",
                 InputNodeType::PatternTypeSelector { .. } => "Pattern Type",
+                InputNodeType::TilingKindSelector { .. } => "Tiling Kind",
                 InputNodeType::ColorPicker { .. } => "Color Picker",
                 InputNodeType::ColorPreset { .. } => "Color Preset",
             },
@@ -432,6 +451,7 @@ impl NodeType {
                 ConfigNodeType::NodeConfig(_) => "Node Config",
                 ConfigNodeType::EdgeConfig(_) => "Edge Config",
                 ConfigNodeType::PinConfig(_) => "Pin Config",
+                ConfigNodeType::GraphConfig(_) => "Graph Config",
                 ConfigNodeType::ApplyToGraph { .. } => "Apply to Graph",
                 ConfigNodeType::ApplyToNode { .. } => "Apply to Node",
             },
@@ -439,6 +459,7 @@ impl NodeType {
             Self::ColorQuad(_) => "Color Quad",
             Self::Vec2(_) => "Vec2",
             Self::Theme => "Theme",
+            Self::ThemeExtended => "Theme Extended",
         }
     }
 
@@ -452,9 +473,9 @@ impl NodeType {
                 let (x, y) = state.vec2();
                 Some(NodeValue::Vec2(x, y))
             }
-            // The Theme node's outputs are per-pin and theme-dependent; they are
+            // The Theme nodes' outputs are per-pin and theme-dependent; they are
             // resolved during propagation, not via this pin-agnostic method.
-            Self::Workflow(_) | Self::Config(_) | Self::Theme => None,
+            Self::Workflow(_) | Self::Config(_) | Self::Theme | Self::ThemeExtended => None,
         }
     }
 }

@@ -18,6 +18,7 @@ pub fn apply_to_graph_node<'a, Message>(
     has_node_config: bool,
     has_edge_config: bool,
     has_pin_config: bool,
+    has_graph_config: bool,
 ) -> iced::Element<'a, Message>
 where
     Message: Clone + 'a,
@@ -72,7 +73,29 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    let content = column![node_config_row, edge_config_row, pin_config_row,].spacing(4);
+    // Graph config row
+    let graph_status = if has_graph_config { "ok" } else { "--" };
+    let graph_config_row = row![
+        pin!(
+            Left,
+            pins::cfg::GRAPH_CONFIG,
+            text("graph").size(10),
+            Input,
+            ::std::any::TypeId::of::<pins::GraphConfigData>()
+        ),
+        container(text(graph_status).size(9))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    let content = column![
+        node_config_row,
+        edge_config_row,
+        pin_config_row,
+        graph_config_row,
+    ]
+    .spacing(4);
 
     column![
         node_title_bar("Apply to Graph", style),

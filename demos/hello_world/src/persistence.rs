@@ -18,10 +18,11 @@ use std::path::PathBuf;
 use crate::ids::{EdgeId, NodeId};
 use crate::nodes::{
     BoolToggleConfig, ColorQuadNode, ConfigNodeType, EdgeConfigInputs, EdgeSections,
-    FloatSliderConfig, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
-    NodeConfigInputs, NodeSections, NodeType, PatternType, PinConfigInputs, Vec2Node,
+    FloatSliderConfig, GraphConfigInputs, InputNodeType, IntSliderConfig, MathNodeState,
+    MathOperation, NodeConfigInputs, NodeSections, NodeType, PatternType, PinConfigInputs,
+    Vec2Node,
 };
-use iced_nodegraph::{EdgeCurve, PinShape};
+use iced_nodegraph::{EdgeCurve, PinShape, TilingKind};
 
 /// Saved section expansion state for EdgeConfig nodes.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -167,9 +168,13 @@ pub enum SavedNodeType {
     PatternTypeSelector {
         pattern: String,
     },
+    TilingKindSelector {
+        kind: String,
+    },
     NodeConfig,
     EdgeConfig,
     PinConfig,
+    GraphConfig,
     ApplyToGraph,
     ApplyToNode,
     Math {
@@ -178,6 +183,7 @@ pub enum SavedNodeType {
     ColorQuad,
     Vec2,
     Theme,
+    ThemeExtended,
 }
 
 /// Saved edge connection with stable IDs.
@@ -235,8 +241,16 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         s if s == cfg::NODE_CONFIG => cfg::NODE_CONFIG,
         s if s == cfg::EDGE_CONFIG => cfg::EDGE_CONFIG,
         s if s == cfg::PIN_CONFIG => cfg::PIN_CONFIG,
+        s if s == cfg::GRAPH_OUT => cfg::GRAPH_OUT,
+        s if s == cfg::GRAPH_CONFIG => cfg::GRAPH_CONFIG,
         s if s == cfg::ON => cfg::ON,
         s if s == cfg::TARGET => cfg::TARGET,
+        // Graph config field pins
+        s if s == graph::BACKGROUND => graph::BACKGROUND,
+        s if s == graph::TILING_KIND => graph::TILING_KIND,
+        s if s == graph::SPACING => graph::SPACING,
+        s if s == graph::THICKNESS => graph::THICKNESS,
+        s if s == graph::LINE_COLOR => graph::LINE_COLOR,
         // Node config field pins (snake_case). Several label strings are shared
         // across node/pin/edge nodes (e.g. "border_color", "pattern"); the first
         // matching arm wins and returns the same string, so the duplicates below
@@ -270,18 +284,32 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         s if s == edge::BORDER_BACKGROUND => edge::BORDER_BACKGROUND,
         s if s == edge::SHADOW_BLUR => edge::SHADOW_BLUR,
         s if s == edge::SHADOW_EXPAND => edge::SHADOW_EXPAND,
-        // Theme node output pins
+        // Theme node output pins (basic palette)
         s if s == theme::BACKGROUND => theme::BACKGROUND,
-        s if s == theme::BACKGROUND_WEAK => theme::BACKGROUND_WEAK,
-        s if s == theme::BACKGROUND_STRONG => theme::BACKGROUND_STRONG,
         s if s == theme::TEXT => theme::TEXT,
         s if s == theme::PRIMARY => theme::PRIMARY,
-        s if s == theme::PRIMARY_WEAK => theme::PRIMARY_WEAK,
-        s if s == theme::PRIMARY_STRONG => theme::PRIMARY_STRONG,
-        s if s == theme::SECONDARY => theme::SECONDARY,
         s if s == theme::SUCCESS => theme::SUCCESS,
         s if s == theme::WARNING => theme::WARNING,
         s if s == theme::DANGER => theme::DANGER,
+        // Theme Extended node output pins (extended palette)
+        s if s == theme_ext::BACKGROUND_BASE => theme_ext::BACKGROUND_BASE,
+        s if s == theme_ext::BACKGROUND_WEAK => theme_ext::BACKGROUND_WEAK,
+        s if s == theme_ext::BACKGROUND_STRONG => theme_ext::BACKGROUND_STRONG,
+        s if s == theme_ext::PRIMARY_BASE => theme_ext::PRIMARY_BASE,
+        s if s == theme_ext::PRIMARY_WEAK => theme_ext::PRIMARY_WEAK,
+        s if s == theme_ext::PRIMARY_STRONG => theme_ext::PRIMARY_STRONG,
+        s if s == theme_ext::SECONDARY_BASE => theme_ext::SECONDARY_BASE,
+        s if s == theme_ext::SECONDARY_WEAK => theme_ext::SECONDARY_WEAK,
+        s if s == theme_ext::SECONDARY_STRONG => theme_ext::SECONDARY_STRONG,
+        s if s == theme_ext::SUCCESS_BASE => theme_ext::SUCCESS_BASE,
+        s if s == theme_ext::SUCCESS_WEAK => theme_ext::SUCCESS_WEAK,
+        s if s == theme_ext::SUCCESS_STRONG => theme_ext::SUCCESS_STRONG,
+        s if s == theme_ext::WARNING_BASE => theme_ext::WARNING_BASE,
+        s if s == theme_ext::WARNING_WEAK => theme_ext::WARNING_WEAK,
+        s if s == theme_ext::WARNING_STRONG => theme_ext::WARNING_STRONG,
+        s if s == theme_ext::DANGER_BASE => theme_ext::DANGER_BASE,
+        s if s == theme_ext::DANGER_WEAK => theme_ext::DANGER_WEAK,
+        s if s == theme_ext::DANGER_STRONG => theme_ext::DANGER_STRONG,
         // Builder node pins
         s if s == build::NEAR_START => build::NEAR_START,
         s if s == build::NEAR_END => build::NEAR_END,
@@ -482,11 +510,15 @@ impl SavedNodeType {
                         pattern: pattern_type_to_string(value),
                     }
                 }
+                InputNodeType::TilingKindSelector { value } => SavedNodeType::TilingKindSelector {
+                    kind: tiling_kind_to_string(*value),
+                },
             },
             NodeType::Config(config) => match config {
                 ConfigNodeType::NodeConfig(_) => SavedNodeType::NodeConfig,
                 ConfigNodeType::EdgeConfig(_) => SavedNodeType::EdgeConfig,
                 ConfigNodeType::PinConfig(_) => SavedNodeType::PinConfig,
+                ConfigNodeType::GraphConfig(_) => SavedNodeType::GraphConfig,
                 ConfigNodeType::ApplyToGraph { .. } => SavedNodeType::ApplyToGraph,
                 ConfigNodeType::ApplyToNode { .. } => SavedNodeType::ApplyToNode,
             },
@@ -496,6 +528,7 @@ impl SavedNodeType {
             NodeType::ColorQuad(_) => SavedNodeType::ColorQuad,
             NodeType::Vec2(_) => SavedNodeType::Vec2,
             NodeType::Theme => SavedNodeType::Theme,
+            NodeType::ThemeExtended => SavedNodeType::ThemeExtended,
         }
     }
 
@@ -565,6 +598,11 @@ impl SavedNodeType {
                     value: string_to_pattern_type(pattern),
                 })
             }
+            SavedNodeType::TilingKindSelector { kind } => {
+                NodeType::Input(InputNodeType::TilingKindSelector {
+                    value: string_to_tiling_kind(kind),
+                })
+            }
             SavedNodeType::NodeConfig => {
                 NodeType::Config(ConfigNodeType::NodeConfig(NodeConfigInputs::default()))
             }
@@ -574,10 +612,14 @@ impl SavedNodeType {
             SavedNodeType::PinConfig => {
                 NodeType::Config(ConfigNodeType::PinConfig(PinConfigInputs::default()))
             }
+            SavedNodeType::GraphConfig => {
+                NodeType::Config(ConfigNodeType::GraphConfig(GraphConfigInputs::default()))
+            }
             SavedNodeType::ApplyToGraph => NodeType::Config(ConfigNodeType::ApplyToGraph {
                 has_node_config: false,
                 has_edge_config: false,
                 has_pin_config: false,
+                has_graph_config: false,
             }),
             SavedNodeType::ApplyToNode => NodeType::Config(ConfigNodeType::ApplyToNode {
                 has_node_config: false,
@@ -589,6 +631,7 @@ impl SavedNodeType {
             SavedNodeType::ColorQuad => NodeType::ColorQuad(ColorQuadNode::default()),
             SavedNodeType::Vec2 => NodeType::Vec2(Vec2Node::default()),
             SavedNodeType::Theme => NodeType::Theme,
+            SavedNodeType::ThemeExtended => NodeType::ThemeExtended,
         }
     }
 }
@@ -739,6 +782,25 @@ fn string_to_pattern_type(s: &str) -> PatternType {
         "Dotted" => PatternType::Dotted,
         "DashDotted" => PatternType::DashDotted,
         _ => PatternType::Solid,
+    }
+}
+
+fn tiling_kind_to_string(kind: TilingKind) -> String {
+    match kind {
+        TilingKind::Grid => "Grid",
+        TilingKind::Dots => "Dots",
+        TilingKind::Triangles => "Triangles",
+        TilingKind::Hex => "Hex",
+    }
+    .to_string()
+}
+
+fn string_to_tiling_kind(s: &str) -> TilingKind {
+    match s {
+        "Dots" => TilingKind::Dots,
+        "Triangles" => TilingKind::Triangles,
+        "Hex" => TilingKind::Hex,
+        _ => TilingKind::Grid,
     }
 }
 

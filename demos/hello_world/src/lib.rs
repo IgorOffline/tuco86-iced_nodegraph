@@ -50,7 +50,7 @@ use iced_nodegraph::{
     ColorQuad, EdgeStatus, EdgeStyle, PinRef, default_edge_style, default_node_style,
     default_pin_style, edge as ng_edge, node as ng_node,
 };
-use iced_nodegraph::{EdgeCurve, PinShape};
+use iced_nodegraph::{EdgeCurve, PinShape, TilingKind};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
@@ -58,17 +58,18 @@ use iced_palette::{
 use ids::{EdgeId, NodeId, PinLabel, generate_edge_id, generate_node_id};
 use nodes::{
     BoolToggleConfig, ColorQuadNode, ConfigNodeType, EdgeConfigInputs, EdgeSection, EdgeSections,
-    FloatSliderConfig, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
-    NodeConfigInputs, NodeSection, NodeSections, NodeType, NodeValue, PatternType, PinConfigInputs,
-    Vec2Node, apply_to_graph_node, apply_to_node_node, bool_toggle_node, color_picker_node,
-    color_preset_node, color_quad_node, edge_config_node, edge_curve_selector_node,
-    float_slider_node, int_slider_node, math_node, node, node_config_node,
-    pattern_type_selector_node, pin_config_node, pin_shape_selector_node, theme_node, vec2_node,
+    FloatSliderConfig, GraphConfigInputs, InputNodeType, IntSliderConfig, MathNodeState,
+    MathOperation, NodeConfigInputs, NodeSection, NodeSections, NodeType, NodeValue, PatternType,
+    PinConfigInputs, Vec2Node, apply_to_graph_node, apply_to_node_node, bool_toggle_node,
+    color_picker_node, color_preset_node, color_quad_node, edge_config_node,
+    edge_curve_selector_node, float_slider_node, graph_config_node, int_slider_node, math_node,
+    node, node_config_node, pattern_type_selector_node, pin_config_node, pin_shape_selector_node,
+    theme_extended_node, theme_node, tiling_kind_selector_node, vec2_node,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use persistence::EdgeData;
 use std::collections::{HashMap, HashSet};
-use style_overlay::{EdgeOverlay, NodeOverlay, PinOverlay};
+use style_overlay::{EdgeOverlay, GraphOverlay, NodeOverlay, PinOverlay};
 
 /// Edge data for in-memory representation (WASM version).
 #[cfg(target_arch = "wasm32")]
@@ -208,6 +209,10 @@ enum ApplicationMessage {
         node_id: NodeId,
         value: PatternType,
     },
+    TilingKindChanged {
+        node_id: NodeId,
+        value: TilingKind,
+    },
     ColorChanged {
         node_id: NodeId,
         color: Color,
@@ -248,6 +253,7 @@ enum ConfigOutput {
     Node(NodeOverlay),
     Edge(EdgeOverlay),
     Pin(PinOverlay),
+    Graph(GraphOverlay),
 }
 
 /// Maps a pin's data-type marker to its semantic color. Pins carry no style;
@@ -270,6 +276,7 @@ fn pin_color_for(ty: std::any::TypeId) -> Color {
     } else if ty == TypeId::of::<pins::NodeConfigData>()
         || ty == TypeId::of::<pins::EdgeConfigData>()
         || ty == TypeId::of::<pins::PinConfigData>()
+        || ty == TypeId::of::<pins::GraphConfigData>()
     {
         colors::PIN_CONFIG
     } else {
@@ -284,6 +291,7 @@ struct ComputedStyle {
     node: NodeOverlay,
     edge: EdgeOverlay,
     pin: PinOverlay,
+    graph: GraphOverlay,
 }
 
 struct Application {
@@ -626,6 +634,9 @@ impl Application {
                     NodeType::Theme => {
                         output.push_str("  Type: Theme\n");
                     }
+                    NodeType::ThemeExtended => {
+                        output.push_str("  Type: ThemeExtended\n");
+                    }
                 }
                 output.push('\n');
             }
@@ -738,7 +749,7 @@ impl Application {
     /// the current theme.
     fn pin_output_value(&self, node_id: &NodeId, pin: &PinLabel) -> Option<NodeValue> {
         match self.nodes.get(node_id) {
-            Some((_, NodeType::Theme)) => {
+            Some((_, NodeType::Theme | NodeType::ThemeExtended)) => {
                 theme_color(&self.current_theme, pin).map(NodeValue::Color)
             }
             Some((_, node_type)) => node_type.output_value(),
@@ -757,14 +768,17 @@ impl Application {
                     ConfigNodeType::NodeConfig(inputs) => *inputs = NodeConfigInputs::default(),
                     ConfigNodeType::EdgeConfig(inputs) => *inputs = EdgeConfigInputs::default(),
                     ConfigNodeType::PinConfig(inputs) => *inputs = PinConfigInputs::default(),
+                    ConfigNodeType::GraphConfig(inputs) => *inputs = GraphConfigInputs::default(),
                     ConfigNodeType::ApplyToGraph {
                         has_node_config,
                         has_edge_config,
                         has_pin_config,
+                        has_graph_config,
                     } => {
                         *has_node_config = false;
                         *has_edge_config = false;
                         *has_pin_config = false;
+                        *has_graph_config = false;
                     }
                     ConfigNodeType::ApplyToNode {
                         has_node_config,
@@ -867,7 +881,8 @@ impl Application {
                     self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
                 }
                 // Handle Theme → Config connections (per-pin palette color)
-                if let (NodeType::Theme, NodeType::Config(_)) = (&from_type, &to_type)
+                if let (NodeType::Theme | NodeType::ThemeExtended, NodeType::Config(_)) =
+                    (&from_type, &to_type)
                     && let Some(color) = theme_color(&self.current_theme, &edge.from_pin)
                 {
                     self.apply_value_to_config_node(
@@ -877,7 +892,8 @@ impl Application {
                     );
                 }
                 // Handle Config → Theme connections (reverse direction)
-                if let (NodeType::Config(_), NodeType::Theme) = (&from_type, &to_type)
+                if let (NodeType::Config(_), NodeType::Theme | NodeType::ThemeExtended) =
+                    (&from_type, &to_type)
                     && let Some(color) = theme_color(&self.current_theme, &edge.to_pin)
                 {
                     self.apply_value_to_config_node(
@@ -938,7 +954,7 @@ impl Application {
         pin_label: &PinLabel,
         value: &NodeValue,
     ) {
-        use nodes::pins::{cfg, edge as epin, node as npin, pin as ppin};
+        use nodes::pins::{cfg, edge as epin, graph as gpin, node as npin, pin as ppin};
 
         let Some((_, node_type)) = self.nodes.get_mut(node_id) else {
             return;
@@ -1046,6 +1062,20 @@ impl Application {
                     inputs.border_width = value.as_float();
                 }
             }
+            ConfigNodeType::GraphConfig(inputs) => {
+                // GraphConfig pin labels mirror GraphStyle + TilingBackground.
+                if *pin_label == gpin::BACKGROUND {
+                    inputs.background_color = value.as_color_quad();
+                } else if *pin_label == gpin::TILING_KIND {
+                    inputs.tiling_kind = value.as_tiling_kind();
+                } else if *pin_label == gpin::SPACING {
+                    inputs.tiling_spacing = value.as_float();
+                } else if *pin_label == gpin::THICKNESS {
+                    inputs.tiling_thickness = value.as_float();
+                } else if *pin_label == gpin::LINE_COLOR {
+                    inputs.tiling_color = value.as_color_quad();
+                }
+            }
             ConfigNodeType::ApplyToNode { target_id, .. } if *pin_label == cfg::TARGET => {
                 *target_id = value.as_int();
             }
@@ -1074,6 +1104,9 @@ impl Application {
             Some((_, NodeType::Config(ConfigNodeType::PinConfig(inputs)))) => {
                 Some(ConfigOutput::Pin(inputs.build()))
             }
+            Some((_, NodeType::Config(ConfigNodeType::GraphConfig(inputs)))) => {
+                Some(ConfigOutput::Graph(inputs.build()))
+            }
             _ => None,
         };
 
@@ -1085,6 +1118,7 @@ impl Application {
             has_node_config,
             has_edge_config,
             has_pin_config,
+            has_graph_config,
         }) = node_type
         {
             if *apply_pin_label == pin::NODE_CONFIG {
@@ -1095,10 +1129,14 @@ impl Application {
                 if matches!(&built_config, Some(ConfigOutput::Edge(_))) {
                     *has_edge_config = true;
                 }
-            } else if *apply_pin_label == pin::PIN_CONFIG
-                && matches!(&built_config, Some(ConfigOutput::Pin(_)))
+            } else if *apply_pin_label == pin::PIN_CONFIG {
+                if matches!(&built_config, Some(ConfigOutput::Pin(_))) {
+                    *has_pin_config = true;
+                }
+            } else if *apply_pin_label == pin::GRAPH_CONFIG
+                && matches!(&built_config, Some(ConfigOutput::Graph(_)))
             {
-                *has_pin_config = true;
+                *has_graph_config = true;
             }
         }
 
@@ -1119,6 +1157,7 @@ impl Application {
                 has_node_config,
                 has_edge_config,
                 has_pin_config,
+                has_graph_config,
             }) = node_type
                 && let Some(configs) = self.pending_configs.get(node_id)
             {
@@ -1138,6 +1177,11 @@ impl Application {
                         ConfigOutput::Pin(pin) => {
                             if *has_pin_config {
                                 computed.pin = pin.merge(&computed.pin);
+                            }
+                        }
+                        ConfigOutput::Graph(graph) => {
+                            if *has_graph_config {
+                                computed.graph = graph.merge(&computed.graph);
                             }
                         }
                     }
@@ -1573,6 +1617,15 @@ impl Application {
                 }
                 Task::none()
             }
+            ApplicationMessage::TilingKindChanged { node_id, value } => {
+                if let Some((_, NodeType::Input(InputNodeType::TilingKindSelector { value: v }))) =
+                    self.nodes.get_mut(&node_id)
+                {
+                    *v = value;
+                    self.propagate_values();
+                }
+                Task::none()
+            }
             ApplicationMessage::ColorChanged { node_id, color } => {
                 if let Some((_, node_type)) = self.nodes.get_mut(&node_id) {
                     match node_type {
@@ -1753,6 +1806,9 @@ impl Application {
         // The dragging edge preview uses the graph-wide computed edge overlay
         // (e.g. from an EdgeConfig -> ApplyToGraph chain).
         let drag_overlay = self.computed_style.edge.clone();
+        // Canvas chrome (background + tiling) from a GraphConfig -> ApplyToGraph
+        // chain, layered over the theme-derived base each frame.
+        let graph_overlay = self.computed_style.graph.clone();
 
         let mut ng: NodeGraph<
             '_,
@@ -1803,6 +1859,11 @@ impl Application {
                     ..default_edge_style(theme, EdgeStatus::Idle)
                 };
                 drag_overlay.resolve_over(base)
+            })
+            .graph_style(move |theme| {
+                // With no GraphConfig connected the overlay is empty and this is
+                // exactly the widget's own default (`GraphStyle::from_theme`).
+                graph_overlay.resolve_over(iced_nodegraph::GraphStyle::from_theme(theme))
             });
 
         // Add all nodes from state (in order)
@@ -1900,6 +1961,15 @@ impl Application {
                             }
                         })
                     }
+                    InputNodeType::TilingKindSelector { value } => {
+                        let id = node_id_clone.clone();
+                        tiling_kind_selector_node(theme, *value, move |v| {
+                            ApplicationMessage::TilingKindChanged {
+                                node_id: id.clone(),
+                                value: v,
+                            }
+                        })
+                    }
                     InputNodeType::ColorPicker { color } => {
                         let id = node_id_clone.clone();
                         color_picker_node(theme, *color, move |c| {
@@ -1949,15 +2019,18 @@ impl Application {
                         })
                     }
                     ConfigNodeType::PinConfig(inputs) => pin_config_node(theme, inputs),
+                    ConfigNodeType::GraphConfig(inputs) => graph_config_node(theme, inputs),
                     ConfigNodeType::ApplyToGraph {
                         has_node_config,
                         has_edge_config,
                         has_pin_config,
+                        has_graph_config,
                     } => apply_to_graph_node(
                         theme,
                         *has_node_config,
                         *has_edge_config,
                         *has_pin_config,
+                        *has_graph_config,
                     ),
                     ConfigNodeType::ApplyToNode {
                         has_node_config,
@@ -1968,6 +2041,7 @@ impl Application {
                 NodeType::ColorQuad(state) => color_quad_node(theme, state),
                 NodeType::Vec2(state) => vec2_node(theme, state),
                 NodeType::Theme => theme_node(theme),
+                NodeType::ThemeExtended => theme_extended_node(theme),
             };
 
             // Apply the computed node-config overlay to every node ("Apply to
@@ -2191,10 +2265,22 @@ impl Application {
                                 value: PatternType::Solid,
                             }),
                         }),
+                    command("tiling_kind", "Tiling Kind Selector")
+                        .description("Select canvas tiling (Grid, Dots, Triangles, Hex)")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Input(InputNodeType::TilingKindSelector {
+                                value: TilingKind::Grid,
+                            }),
+                        }),
                     command("theme", "Theme")
-                        .description("Active theme's palette as color outputs")
+                        .description("Active theme's basic palette as color outputs")
                         .action(ApplicationMessage::SpawnNode {
                             node_type: NodeType::Theme,
+                        }),
+                    command("theme_extended", "Theme Extended")
+                        .description("Extended palette (base/weak/strong) as color outputs")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::ThemeExtended,
                         }),
                 ];
                 ("Input Nodes", commands)
@@ -2247,6 +2333,13 @@ impl Application {
                                 PinConfigInputs::default(),
                             )),
                         }),
+                    command("graph_config", "Graph Config")
+                        .description("Canvas background and tiling (grid/dots/...)")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Config(ConfigNodeType::GraphConfig(
+                                GraphConfigInputs::default(),
+                            )),
+                        }),
                     // Builder nodes
                     command("color_quad", "Color Quad")
                         .description("Combine 4 corner colors into one ColorQuad")
@@ -2266,6 +2359,7 @@ impl Application {
                                 has_node_config: false,
                                 has_edge_config: false,
                                 has_pin_config: false,
+                                has_graph_config: false,
                             }),
                         }),
                     command("apply_to_node", "Apply to Node")
@@ -2312,31 +2406,68 @@ impl Application {
 
 /// Resolves a Theme node output pin to a color from the theme's extended palette.
 /// Returns None for unknown pins.
+/// Resolves a Theme / Theme Extended node output pin to its color. Basic
+/// [`theme`](nodes::pins::theme) labels map to the flat [`Theme::palette`];
+/// [`theme_ext`](nodes::pins::theme_ext) labels map to the graded
+/// [`Theme::extended_palette`]. The two label sets are disjoint, so one lookup
+/// serves both node kinds.
 fn theme_color(theme: &Theme, pin: &PinLabel) -> Option<iced::Color> {
-    use nodes::pins::theme as t;
-    let p = theme.extended_palette();
-    let color = if *pin == t::BACKGROUND {
-        p.background.base.color
-    } else if *pin == t::BACKGROUND_WEAK {
-        p.background.weak.color
-    } else if *pin == t::BACKGROUND_STRONG {
-        p.background.strong.color
+    use nodes::pins::{theme as t, theme_ext as x};
+
+    // Basic palette (flat entries).
+    let pal = theme.palette();
+    if *pin == t::BACKGROUND {
+        return Some(pal.background);
     } else if *pin == t::TEXT {
-        p.background.base.text
+        return Some(pal.text);
     } else if *pin == t::PRIMARY {
-        p.primary.base.color
-    } else if *pin == t::PRIMARY_WEAK {
-        p.primary.weak.color
-    } else if *pin == t::PRIMARY_STRONG {
-        p.primary.strong.color
-    } else if *pin == t::SECONDARY {
-        p.secondary.base.color
+        return Some(pal.primary);
     } else if *pin == t::SUCCESS {
-        p.success.base.color
+        return Some(pal.success);
     } else if *pin == t::WARNING {
-        p.warning.base.color
+        return Some(pal.warning);
     } else if *pin == t::DANGER {
+        return Some(pal.danger);
+    }
+
+    // Extended palette (base/weak/strong per accent group).
+    let p = theme.extended_palette();
+    let color = if *pin == x::BACKGROUND_BASE {
+        p.background.base.color
+    } else if *pin == x::BACKGROUND_WEAK {
+        p.background.weak.color
+    } else if *pin == x::BACKGROUND_STRONG {
+        p.background.strong.color
+    } else if *pin == x::PRIMARY_BASE {
+        p.primary.base.color
+    } else if *pin == x::PRIMARY_WEAK {
+        p.primary.weak.color
+    } else if *pin == x::PRIMARY_STRONG {
+        p.primary.strong.color
+    } else if *pin == x::SECONDARY_BASE {
+        p.secondary.base.color
+    } else if *pin == x::SECONDARY_WEAK {
+        p.secondary.weak.color
+    } else if *pin == x::SECONDARY_STRONG {
+        p.secondary.strong.color
+    } else if *pin == x::SUCCESS_BASE {
+        p.success.base.color
+    } else if *pin == x::SUCCESS_WEAK {
+        p.success.weak.color
+    } else if *pin == x::SUCCESS_STRONG {
+        p.success.strong.color
+    } else if *pin == x::WARNING_BASE {
+        p.warning.base.color
+    } else if *pin == x::WARNING_WEAK {
+        p.warning.weak.color
+    } else if *pin == x::WARNING_STRONG {
+        p.warning.strong.color
+    } else if *pin == x::DANGER_BASE {
         p.danger.base.color
+    } else if *pin == x::DANGER_WEAK {
+        p.danger.weak.color
+    } else if *pin == x::DANGER_STRONG {
+        p.danger.strong.color
     } else {
         return None;
     };
@@ -2619,6 +2750,7 @@ mod tests {
                     has_node_config: false,
                     has_edge_config: false,
                     has_pin_config: false,
+                    has_graph_config: false,
                 }),
             ),
         );
@@ -2669,6 +2801,133 @@ mod tests {
             Some(red),
             "computed node style did not receive the config fill color",
         );
+    }
+
+    #[test]
+    fn test_graph_config_chain_applies_to_computed_style() {
+        // ColorPicker -> GraphConfig.background and TilingKind -> GraphConfig.tiling_kind,
+        // then GraphConfig -> ApplyToGraph.graph. The computed graph overlay must
+        // carry both, and resolve_over must install them onto the theme base.
+        use iced_nodegraph::{GraphStyle, TilingKind};
+
+        let mut app = Application::default();
+        app.nodes.clear();
+        app.node_order.clear();
+        app.edges.clear();
+        app.edge_order.clear();
+
+        let blue = Color::from_rgb(0.0, 0.0, 1.0);
+        let picker = generate_node_id();
+        let kind = generate_node_id();
+        let cfg = generate_node_id();
+        let apply = generate_node_id();
+        let p = Point::new(0.0, 0.0);
+        app.nodes.insert(
+            picker.clone(),
+            (
+                p,
+                NodeType::Input(InputNodeType::ColorPicker { color: blue }),
+            ),
+        );
+        app.nodes.insert(
+            kind.clone(),
+            (
+                p,
+                NodeType::Input(InputNodeType::TilingKindSelector {
+                    value: TilingKind::Dots,
+                }),
+            ),
+        );
+        app.nodes.insert(
+            cfg.clone(),
+            (
+                p,
+                NodeType::Config(ConfigNodeType::GraphConfig(GraphConfigInputs::default())),
+            ),
+        );
+        app.nodes.insert(
+            apply.clone(),
+            (
+                p,
+                NodeType::Config(ConfigNodeType::ApplyToGraph {
+                    has_node_config: false,
+                    has_edge_config: false,
+                    has_pin_config: false,
+                    has_graph_config: false,
+                }),
+            ),
+        );
+
+        use nodes::pins;
+        let mut edge = |from: NodeId, fp: PinLabel, to: NodeId, tp: PinLabel| {
+            let e = generate_edge_id();
+            app.edges.insert(
+                e.clone(),
+                EdgeData {
+                    from_node: from,
+                    from_pin: fp,
+                    to_node: to,
+                    to_pin: tp,
+                },
+            );
+            app.edge_order.push(e);
+        };
+        edge(
+            picker,
+            pins::input::COLOR,
+            cfg.clone(),
+            pins::graph::BACKGROUND,
+        );
+        edge(
+            kind,
+            pins::input::VALUE,
+            cfg.clone(),
+            pins::graph::TILING_KIND,
+        );
+        edge(
+            cfg,
+            pins::cfg::GRAPH_OUT,
+            apply.clone(),
+            pins::cfg::GRAPH_CONFIG,
+        );
+
+        app.propagate_values();
+
+        // The ApplyToGraph must have registered the graph config.
+        if let Some((
+            _,
+            NodeType::Config(ConfigNodeType::ApplyToGraph {
+                has_graph_config, ..
+            }),
+        )) = app.nodes.get(&apply)
+        {
+            assert!(
+                *has_graph_config,
+                "ApplyToGraph did not register graph config"
+            );
+        } else {
+            panic!("apply node missing");
+        }
+
+        // The computed overlay carries background + tiling kind...
+        assert_eq!(
+            app.computed_style.graph.background_color,
+            Some(blue),
+            "computed graph style did not receive the background color",
+        );
+        assert_eq!(
+            app.computed_style.graph.tiling_kind,
+            Some(TilingKind::Dots),
+            "computed graph style did not receive the tiling kind",
+        );
+
+        // ...and resolve_over installs them onto a theme base.
+        let resolved = app
+            .computed_style
+            .graph
+            .resolve_over(GraphStyle::from_theme(&app.current_theme));
+        assert_eq!(resolved.background_color, blue);
+        assert_eq!(resolved.tiling.map(|t| t.kind), Some(TilingKind::Dots));
     }
 
     #[test]
@@ -2724,6 +2983,7 @@ mod tests {
                     has_node_config: false,
                     has_edge_config: false,
                     has_pin_config: false,
+                    has_graph_config: false,
                 }),
             ),
         );
@@ -2814,6 +3074,7 @@ mod tests {
                     has_node_config: false,
                     has_edge_config: false,
                     has_pin_config: false,
+                    has_graph_config: false,
                 }),
             ),
         );
@@ -2840,12 +3101,79 @@ mod tests {
         );
         edge(cfg, pins::cfg::NODE_OUT, apply, pins::cfg::NODE_CONFIG);
 
-        let expected = app.current_theme.extended_palette().primary.base.color;
+        let expected = app.current_theme.palette().primary;
         app.propagate_values();
         assert_eq!(
             app.computed_style.node.fill_color.map(|q| q.near_start),
             Some(expected),
             "theme primary color did not propagate to the node config",
+        );
+    }
+
+    #[test]
+    fn test_theme_extended_node_feeds_config() {
+        // ThemeExtended.primary_strong -> NodeConfig.fill_color -> ApplyToGraph.
+        // The computed node style must carry the extended palette's strong primary.
+        let mut app = Application::default();
+        app.nodes.clear();
+        app.node_order.clear();
+        app.edges.clear();
+        app.edge_order.clear();
+
+        let p = Point::new(0.0, 0.0);
+        let theme = generate_node_id();
+        let cfg = generate_node_id();
+        let apply = generate_node_id();
+        app.nodes
+            .insert(theme.clone(), (p, NodeType::ThemeExtended));
+        app.nodes.insert(
+            cfg.clone(),
+            (
+                p,
+                NodeType::Config(ConfigNodeType::NodeConfig(NodeConfigInputs::default())),
+            ),
+        );
+        app.nodes.insert(
+            apply.clone(),
+            (
+                p,
+                NodeType::Config(ConfigNodeType::ApplyToGraph {
+                    has_node_config: false,
+                    has_edge_config: false,
+                    has_pin_config: false,
+                    has_graph_config: false,
+                }),
+            ),
+        );
+
+        use nodes::pins;
+        let mut edge = |from: NodeId, fp: PinLabel, to: NodeId, tp: PinLabel| {
+            let e = generate_edge_id();
+            app.edges.insert(
+                e.clone(),
+                EdgeData {
+                    from_node: from,
+                    from_pin: fp,
+                    to_node: to,
+                    to_pin: tp,
+                },
+            );
+            app.edge_order.push(e);
+        };
+        edge(
+            theme,
+            pins::theme_ext::PRIMARY_STRONG,
+            cfg.clone(),
+            pins::node::FILL_COLOR,
+        );
+        edge(cfg, pins::cfg::NODE_OUT, apply, pins::cfg::NODE_CONFIG);
+
+        let expected = app.current_theme.extended_palette().primary.strong.color;
+        app.propagate_values();
+        assert_eq!(
+            app.computed_style.node.fill_color.map(|q| q.near_start),
+            Some(expected),
+            "extended palette strong primary did not propagate to the node config",
         );
     }
 
