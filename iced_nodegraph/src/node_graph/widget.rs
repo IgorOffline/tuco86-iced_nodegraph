@@ -1598,11 +1598,14 @@ where
         // Handle keyboard shortcuts
         if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
             match key {
-                // Ctrl+D: Clone selected nodes
+                // Ctrl+D: Clone selected nodes. Gated on on_clone: without a handler
+                // the clone cannot be persisted, so leave the shortcut unhandled and
+                // let the key fall through instead of silently swallowing it.
                 keyboard::Key::Character(c)
                     if c.as_str() == "d"
                         && modifiers.command()
-                        && !state.selected_nodes.is_empty() =>
+                        && !state.selected_nodes.is_empty()
+                        && self.on_clone_handler().is_some() =>
                 {
                     let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
                     let node_ids = self.translate_node_ids(&indices);
@@ -2220,8 +2223,10 @@ where
                         return;
                     }
 
-                    // Delete/Backspace: Delete selected nodes
-                    // Handled AFTER child widgets so text inputs can consume the event first
+                    // Delete/Backspace: Delete selected nodes.
+                    // Handled AFTER child widgets so text inputs can consume the event
+                    // first. Gated on on_delete: without a handler the delete cannot be
+                    // persisted, so don't consume the key (let it fall through).
                     if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event
                         && matches!(
                             key,
@@ -2229,6 +2234,7 @@ where
                                 | keyboard::Key::Named(keyboard::key::Named::Backspace)
                         )
                         && !state.selected_nodes.is_empty()
+                        && self.on_delete_handler().is_some()
                     {
                         let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
                         let node_ids = self.translate_node_ids(&indices);
@@ -2511,28 +2517,35 @@ where
                                                 }
                                             } // end if !shift_held
 
-                                            // No existing connection (or shift held to fork
-                                            // a new edge): start a fresh drag.
-                                            // Compute valid targets ONCE at drag-start
-                                            let valid_targets = compute_valid_targets(
-                                                self, tree, layout, node_index, pin_index, None,
-                                            );
-                                            let state = tree.state.downcast_mut::<NodeGraphState>();
-                                            state.valid_drop_targets = valid_targets;
-                                            state.dragging = Dragging::Edge(
-                                                node_index,
-                                                pin_index,
-                                                cursor_position.into_euclid(),
-                                            );
-                                            // Emit drag start event
-                                            if let Some(handler) = self.on_drag_start_handler() {
-                                                shell.publish(handler(DragInfo::Edge {
-                                                    from_node: current_node_id.clone(),
-                                                    from_pin: pin_state.pin_id.clone(),
-                                                }));
+                                            // No existing connection (or shift held to fork a
+                                            // new edge): start a fresh drag - but only if
+                                            // on_connect is wired. Without it a dropped edge
+                                            // cannot persist, so let the press fall through to
+                                            // node selection instead.
+                                            if self.on_connect_handler().is_some() {
+                                                // Compute valid targets ONCE at drag-start
+                                                let valid_targets = compute_valid_targets(
+                                                    self, tree, layout, node_index, pin_index, None,
+                                                );
+                                                let state =
+                                                    tree.state.downcast_mut::<NodeGraphState>();
+                                                state.valid_drop_targets = valid_targets;
+                                                state.dragging = Dragging::Edge(
+                                                    node_index,
+                                                    pin_index,
+                                                    cursor_position.into_euclid(),
+                                                );
+                                                // Emit drag start event
+                                                if let Some(handler) = self.on_drag_start_handler()
+                                                {
+                                                    shell.publish(handler(DragInfo::Edge {
+                                                        from_node: current_node_id.clone(),
+                                                        from_pin: pin_state.pin_id.clone(),
+                                                    }));
+                                                }
+                                                shell.capture_event();
+                                                return;
                                             }
-                                            shell.capture_event();
-                                            return;
                                         }
                                     }
 
@@ -2567,33 +2580,44 @@ where
                                         let new_selection: Vec<usize> =
                                             state.selected_nodes.iter().copied().collect();
 
-                                        // Decide between single node drag or group move
-                                        if state.selected_nodes.len() > 1
-                                            && state.selected_nodes.contains(&node_index)
-                                        {
-                                            // Multiple nodes selected, start group move
-                                            let selected: Vec<usize> =
-                                                state.selected_nodes.iter().copied().collect();
-                                            state.dragging =
-                                                Dragging::GroupMove(cursor_position.into_euclid());
-                                            // Emit drag start event for group
-                                            if let Some(handler) = self.on_drag_start_handler() {
-                                                shell.publish(handler(DragInfo::Group {
-                                                    node_ids: self.translate_node_ids(&selected),
-                                                }));
-                                            }
-                                        } else {
-                                            // Single node drag
-                                            state.dragging = Dragging::Node(
-                                                node_index,
-                                                cursor_position.into_euclid(),
-                                            );
-                                            // Emit drag start event for single node
-                                            if let Some(handler) = self.on_drag_start_handler()
-                                                && let Some(node_id) =
-                                                    self.index_to_node_id(node_index)
+                                        // Decide between single node drag or group move -
+                                        // only when on_move is wired. Node positions come
+                                        // from the host, so without on_move a drag would move
+                                        // the node visually then snap back on the next frame;
+                                        // gate it off (selection below still fires).
+                                        if self.on_move_handler().is_some() {
+                                            if state.selected_nodes.len() > 1
+                                                && state.selected_nodes.contains(&node_index)
                                             {
-                                                shell.publish(handler(DragInfo::Node { node_id }));
+                                                // Multiple nodes selected, start group move
+                                                let selected: Vec<usize> =
+                                                    state.selected_nodes.iter().copied().collect();
+                                                state.dragging = Dragging::GroupMove(
+                                                    cursor_position.into_euclid(),
+                                                );
+                                                // Emit drag start event for group
+                                                if let Some(handler) = self.on_drag_start_handler()
+                                                {
+                                                    shell.publish(handler(DragInfo::Group {
+                                                        node_ids: self
+                                                            .translate_node_ids(&selected),
+                                                    }));
+                                                }
+                                            } else {
+                                                // Single node drag
+                                                state.dragging = Dragging::Node(
+                                                    node_index,
+                                                    cursor_position.into_euclid(),
+                                                );
+                                                // Emit drag start event for single node
+                                                if let Some(handler) = self.on_drag_start_handler()
+                                                    && let Some(node_id) =
+                                                        self.index_to_node_id(node_index)
+                                                {
+                                                    shell.publish(handler(DragInfo::Node {
+                                                        node_id,
+                                                    }));
+                                                }
                                             }
                                         }
 

@@ -1108,7 +1108,9 @@ fn snapshot_node_graph() -> Element<'static, Msg, Theme, Renderer> {
     let mut ng: Graph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
-        .on_select(Msg::Select);
+        .on_select(Msg::Select)
+        // on_move is required for node dragging (the widget gates the drag on it).
+        .on_move(Msg::Move);
     // Left-aligned text inside the body, so it lands on the side that gets
     // clipped when the node is dragged off the left edge.
     let body = container(text("HELLO WORLD").size(24))
@@ -1176,5 +1178,38 @@ fn node_dragged_to_edge_and_back_renders_identically() {
     assert!(
         back_matches,
         "node dragged to the edge and back must render identically to origin",
+    );
+}
+
+#[test]
+fn pin_press_without_on_connect_falls_through_to_selection() {
+    // Gating: with no on_connect wired, pressing a pin must not start an edge drag;
+    // the press falls through to selecting the pin's node instead.
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_select(Msg::Select); // deliberately no on_connect
+    ng.push_node(node(
+        0usize,
+        OUT_POS,
+        pin!(Right, 0usize, pin_body(), Output),
+    ));
+    ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
+    let mut ui = Simulator::new(Element::from(ng));
+
+    // Just inside node 0's right edge: within PIN_CLICK_THRESHOLD of the pin, yet
+    // still over the body, so a blocked edge drag falls through to body selection.
+    let near_pin = Point::new(OUT_POS.x + NODE_W - 2.0, OUT_POS.y + NODE_H / 2.0);
+    drag(&mut ui, near_pin, in_anchor());
+
+    let msgs = messages(ui);
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::Connect(_, _))),
+        "without on_connect, pressing a pin must not start an edge: {msgs:?}",
+    );
+    assert!(
+        msgs.iter()
+            .any(|m| matches!(m, Msg::Select(ids) if ids.contains(&0))),
+        "the pin press should fall through to selecting its node: {msgs:?}",
     );
 }
