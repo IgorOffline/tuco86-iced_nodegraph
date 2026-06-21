@@ -117,8 +117,6 @@ enum Message {
     SpawnNode(ShaderNodeType),
     // Theme
     ChangeTheme(Theme),
-    // Animation
-    Tick,
     // Camera/viewport tracking
     CameraChanged {
         position: Point,
@@ -361,9 +359,6 @@ impl Application {
             Message::WindowResized(size) => {
                 self.viewport_size = size;
             }
-            Message::Tick => {
-                // Animation frame - handled by the widget
-            }
         }
 
         Task::none()
@@ -451,8 +446,6 @@ impl Application {
                 }
                 None
             }),
-            // Animation frames for NodeGraph
-            window::frames().map(|_| Message::Tick),
             // Window resize events
             event::listen_with(|event, _, _| match event {
                 Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),

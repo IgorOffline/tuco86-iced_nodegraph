@@ -46,7 +46,6 @@ use graph::generate_procedural_graph;
 use iced::{
     Color, Element, Length, Point, Rectangle, Subscription, Theme, Vector, mouse,
     widget::{canvas, checkbox, column, container, opaque, row, stack, text},
-    window,
 };
 use iced_nodegraph::{
     Counts, GraphInfo, PinInfo, PinRef, PinStatus, PinStyle, SdfDebug, default_pin_style, edge,
@@ -128,7 +127,6 @@ enum ApplicationMessage {
         delta: Vector,
         indices: Vec<usize>,
     },
-    Tick,
     ToggleDebugEdges,
     ToggleDebugShadows,
     ToggleDebugFill,
@@ -191,7 +189,6 @@ impl Application {
                     }
                 }
             }
-            ApplicationMessage::Tick => {}
             ApplicationMessage::ToggleDebugEdges => self.sdf_debug.edges = !self.sdf_debug.edges,
             ApplicationMessage::ToggleDebugShadows => {
                 self.sdf_debug.shadows = !self.sdf_debug.shadows
@@ -390,8 +387,8 @@ impl Application {
     }
 
     fn subscription(&self) -> Subscription<ApplicationMessage> {
-        // Enable continuous animation for NodeGraph animations
-        Subscription::batch(vec![window::frames().map(|_| ApplicationMessage::Tick)])
+        // The widget self-drives redraws while anything animates; no frame clock needed.
+        Subscription::none()
     }
 }
 

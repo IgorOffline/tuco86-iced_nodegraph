@@ -166,7 +166,6 @@ enum ApplicationMessage {
     WindowMaximizedChanged(bool),
     NavigateToSubmenu(String),
     NavigateBack,
-    Tick,
     // Selection-related messages
     SelectionChanged(Vec<NodeId>),
     CloneNodes(Vec<NodeId>),
@@ -1461,7 +1460,6 @@ impl Application {
                 self.command_input.clear();
                 focus_input()
             }
-            ApplicationMessage::Tick => Task::none(),
             ApplicationMessage::ExportState => {
                 self.export_state_to_file();
                 Task::none()
@@ -2388,7 +2386,6 @@ impl Application {
     fn subscription(&self) -> Subscription<ApplicationMessage> {
         Subscription::batch(vec![
             event::listen_with(handle_keyboard_event),
-            window::frames().map(|_| ApplicationMessage::Tick),
             event::listen_with(|event, _, _| match event {
                 Event::Window(window::Event::Resized(size)) => {
                     Some(ApplicationMessage::WindowResized(size))

@@ -37,7 +37,6 @@ mod nodes;
 use iced::{
     Element, Length, Point, Subscription, Task, Theme, Vector,
     widget::{button, column, container, opaque, pick_list, row, slider, stack, text},
-    window,
 };
 use iced_nodegraph::{
     GraphStyle, NodeStatus, NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle,
@@ -122,7 +121,6 @@ enum Message {
     SelectNode(usize),
     ApplyPreset(NodePreset),
     ChangeTheme(Theme),
-    Tick,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,7 +209,7 @@ impl Application {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        window::frames().map(|_| Message::Tick)
+        Subscription::none()
     }
 
     fn theme(&self) -> Theme {
@@ -276,9 +274,6 @@ impl Application {
             }
             Message::ChangeTheme(theme) => {
                 self.current_theme = theme;
-            }
-            Message::Tick => {
-                // Animation tick - handled by the widget
             }
         }
         Task::none()
