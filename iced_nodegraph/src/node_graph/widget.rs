@@ -322,7 +322,9 @@ fn pin_cutout_params<P: PinId + 'static, UI>(
         let pin_style =
             resolve_pin_style::<P, UI>(pin_style_fn, pin_state, other, theme, pin_status);
         let indicator_r = pin_style.radius * 0.4;
-        let cutout_r = indicator_r + pin_style.border_width;
+        // Cut a hole roughly twice the drawn pin's visual extent, so pins sit in
+        // a clear well rather than hugging the body edge.
+        let cutout_r = (indicator_r + pin_style.border_width) * 2.0;
         if cutout_r <= 0.01 {
             continue;
         }
